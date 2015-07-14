@@ -1,6 +1,15 @@
 const E = require('../hareactive/event')
 const B = require('../hareactive/behavior')
 
+const snabbdom = require('snabbdom');
+const patch = snabbdom.init([
+  require('snabbdom/modules/class'),
+  require('snabbdom/modules/hero'),
+  require('snabbdom/modules/style'),
+  require('snabbdom/modules/eventlisteners'),
+])
+const h = require('snabbdom/h')
+
 var canvas, ctx
 // Behaviors
 const sizeB = B.BehaviorK({x: 0, y: 0})
@@ -10,6 +19,8 @@ var scrollX = 0
 var scrollGestureInitiated = false
 
 var lastPos = {x: 0, y: 0}
+
+var domRender
 
 // Helper functions
 const listen = (elm, event, cb) => elm.addEventListener(event, cb, false)
@@ -87,7 +98,8 @@ listen(document, 'DOMContentLoaded', () => {
     requestAnimationFrame(frame)
   })
 
-  createTaskElms()
+  domRender = domRenderer()
+  domRender()
   adjustHeight(canvas, ctx)
 })
 
@@ -131,64 +143,31 @@ const touchMove = (ev) => {
   }
 }
 
-const addSubTasks = (task, elm) => {
-  elm.classList.remove('folded')
-  elm.classList.add('unfolded')
-  var i, subTaskList = document.createElement('ul')
-  for (i = 0; i < task.children.length; ++i) {
-    var childElm = createTaskElm(task.children[i])
-    subTaskList.appendChild(childElm)
-  }
-  elm.appendChild(subTaskList)
-}
-
-const rmSubTasks = (task, elm) => {
-  elm.classList.add('folded')
-  elm.classList.remove('unfolded')
-  elm.removeChild(elm.querySelector('ul'))
-}
-
 const toggleFold = (task, elm) => {
   if (task.children.length > 0) {
-    if (task.open === true) {
-      task.open = false
-      rmSubTasks(task, elm)
-    } else {
-      task.open = true
-      addSubTasks(task, elm)
-    }
+    task.open = !task.open
+    domRender()
+    adjustHeight()
   }
-  adjustHeight()
 }
 
-const createTaskElm = (task) => {
-  const elm = document.createElement('li')
-  // Create line
-  const taskLine = document.createElement('div')
-  taskLine.classList.add('task-line')
-  elm.appendChild(taskLine)
-  // Create title elm
-  const titleElm = document.createElement('div')
-  titleElm.classList.add('title')
-  titleElm.textContent = task.title
-  listen(titleElm, 'click', part(toggleFold, [task, elm]))
-  taskLine.appendChild(titleElm)
-  // Create start button
-  const startBtn = document.createElement('div')
-  startBtn.textContent = 'BEGIN!'
-  taskLine.appendChild(startBtn)
-  if (task.open === true && task.children.length > 0) {
-    addSubTasks(task, elm)
-  } else {
-    elm.classList.add('folded')
-  }
-  return elm
+const vtask = (task) => {
+  const subtasks = task.open ? h('ul', task.children.map(vtask)) : []
+  return h('li', {
+    class: {folded: !task.open, unfolded: task.open}
+  }, [
+    h('div.task-line', [
+      h('div.title', {on: {click: [toggleFold, task]}}, task.title), h('div', 'BEGIN!'),
+    ]),
+  ].concat(subtasks))
 }
 
-const createTaskElms = () => {
-  const listElm = document.getElementById('tasks')
-  for (var i = 0; i < tasks.length; ++i) {
-    var elm = createTaskElm(tasks[i])
-    listElm.appendChild(elm)
-  }
+const vtree = (state) =>
+  h('div#container', [
+    h('ul#tasks', tasks.map(vtask))
+  ])
+
+const domRenderer = () => {
+  var oldVtree = document.getElementById('container')
+  return (state) => oldVtree = patch(oldVtree, vtree(state))
 }
