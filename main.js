@@ -163,11 +163,20 @@ const toggleFold = (task, elm) => {
 
 const createTaskElm = (task) => {
   const elm = document.createElement('li')
+  // Create line
+  const taskLine = document.createElement('div')
+  taskLine.classList.add('task-line')
+  elm.appendChild(taskLine)
+  // Create title elm
   const titleElm = document.createElement('div')
   titleElm.classList.add('title')
   titleElm.textContent = task.title
   listen(titleElm, 'click', part(toggleFold, [task, elm]))
-  elm.appendChild(titleElm)
+  taskLine.appendChild(titleElm)
+  // Create start button
+  const startBtn = document.createElement('div')
+  startBtn.textContent = 'BEGIN!'
+  taskLine.appendChild(startBtn)
   if (task.open === true && task.children.length > 0) {
     addSubTasks(task, elm)
   } else {
