@@ -9,6 +9,7 @@ const patch = snabbdom.init([
   require('snabbdom/modules/eventlisteners'),
 ])
 const h = require('snabbdom/h')
+const attachTo = require('snabbdom/helpers/attachto')
 
 var canvas, ctx
 // Behaviors
@@ -23,11 +24,9 @@ var lastPos = {x: 0, y: 0}
 var domRender
 
 // Helper functions
+const noop = () => {}
 const listen = (elm, event, cb) => elm.addEventListener(event, cb, false)
-const part = (fn, args) => () => {
-  for (var i = 0; i < arguments.length; ++i) args.push(arguments[i])
-  return fn.apply(undefined, args)
-}
+const part = (fn, ...args) => (...args2) => fn.apply(undefined, args.concat(args2))
 
 const tasks = [
   {title: 'Eat pomegranate', open: false, children: [
@@ -84,8 +83,8 @@ listen(document, 'DOMContentLoaded', () => {
 
   listen(document, 'touchstart', touchStart)
   listen(document, 'touchend', touchEnd)
-  document.addEventListener('touchcancel', touchCancel)
-  document.addEventListener('touchmove', touchMove)
+  listen(document, 'touchcancel', touchCancel)
+  listen(document, 'touchmove', touchMove)
 
   B.on((dim) => {
     canvas.width = dim.x * window.devicePixelRatio
@@ -151,16 +150,78 @@ const toggleFold = (task, elm) => {
   }
 }
 
-const vtask = (task) => {
-  const subtasks = task.open ? h('ul', task.children.map(vtask)) : []
-  return h('li', {
-    class: {folded: !task.open, unfolded: task.open}
+const openTimerModal = (task, ev) => {
+  task.timerModalOpen = true;
+  domRender()
+}
+
+const closeTimerModal = (task, ev) => {
+  task.timerModalOpen = false;
+  domRender()
+}
+
+const startTimer = (task, duration) => {
+  const now = Date.now()
+  task.timerModalOpen = false
+  task.timerStartedAt = now
+  task.timerEndsAt = duration !== undefined ? now + duration : undefined
+  domRender()
+}
+
+// View
+
+const startTimerModal = (task) =>
+  h('div.begin-session', [
+    h('div.btn', {on: {click: part(startTimer, task, undefined)}}, 'Stop timer manually'),
+    h('h2', 'or after'),
+    h('table', [
+      h('tr', [
+        h('td.btn', '10s'),
+        h('td.btn', '5m'),
+        h('td.btn', '10m'),
+      ]),
+      h('tr', [
+        h('td.btn', '15m'),
+        h('td.btn', '20m'),
+        h('td.btn', '25m'),
+      ]),
+      h('tr', [
+        h('td.btn', '30m'),
+        h('td.btn', '35m'),
+        h('td.btn', '40m'),
+      ]),
+      h('tr', [
+        h('td.btn', '45m'),
+        h('td.btn', '50m'),
+        h('td.btn', '55m'),
+      ]),
+      h('tr', [
+        h('td.btn', '1h'),
+        h('td.btn', '1h 15m'),
+        h('td.btn', '1h 30m'),
+      ]),
+    ]),
+  ])
+
+const timerModal = (task) =>
+  h('div', [
+    'Session started!', h('br'),
+    task.timerStartedAt, h('br'),
+    task.timerEndsAt || 'never ends',
+  ])
+
+const vtask = (task) =>
+  h('li', {
+    class: {folded: !task.open}
   }, [
     h('div.task-line', [
-      h('div.title', {on: {click: [toggleFold, task]}}, task.title), h('div', 'BEGIN!'),
+      h('div.title', {on: {click: [toggleFold, task]}}, task.title),
+      h('div', {on: {click: part(openTimerModal, task)}}, 'BEGIN!'),
     ]),
-  ].concat(subtasks))
-}
+    task.open ? h('ul', task.children.map(vtask)) : '',
+    task.timerModalOpen ? modal(startTimerModal(task), part(closeTimerModal, task)) : '',
+    task.timerStartedAt ? modal(timerModal(task), noop) : '',
+  ])
 
 const vtree = (state) =>
   h('div#container', [
@@ -171,3 +232,8 @@ const domRenderer = () => {
   var oldVtree = document.getElementById('container')
   return (state) => oldVtree = patch(oldVtree, vtree(state))
 }
+
+const modal = (vnode, rmCb) => attachTo(document.body, h('div.modal', [
+  h('div.modal-backdrop', {on: {click: rmCb}}),
+  vnode
+]))

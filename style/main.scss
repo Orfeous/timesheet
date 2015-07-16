@@ -1,0 +1,165 @@
+$font-stack: Roboto;
+$primary-color: #333;
+$border-color: #cfcfcf;
+
+$sm-space: 5px;
+$lg-space: 12px;
+$text-to-edge: 16px;
+
+$md-rad: 4px;
+
+// Colors
+$sec-text-color: lighten(#000, 35);
+$spacer-grey: #e3e3e3;
+$prm-color: #801E74;
+$sec-color: #1CC6ae;
+$light-border-color: darken(#fff, 10);
+
+$trophy-color: #ead700;
+$done-color: #2eaa2e;
+
+// Animation times
+$short-dur: 60ms;
+$med-dur: 200ms;
+$long-dur: 350ms;
+
+@mixin base-btn($color) {
+  color: #fff;
+  background: $color;
+  padding: 0.6em;
+  border: 1px solid $color;
+  cursor: pointer;
+  transition: color $short-dur ease-in-out,
+              background-color $short-dur ease-in-out,
+              border-color $short-dur ease-in-out;
+  &:active {
+    background-color: lighten($color, 15);
+    border-color: lighten($color, 15);
+  }
+}
+
+.btn {
+  @include base-btn($sec-color);
+}
+
+body {
+  font: 100% $font-stack;
+  color: $primary-color;
+}
+
+html, body {
+  padding: 0;
+  margin: 0;
+}
+
+canvas {
+  display: block;
+  position: absolute;
+  z-index: -1;
+}
+
+.title {
+  padding: 1em 1.5em;
+  flex-grow: 1;
+}
+
+.task-line {
+  display: flex;
+  div {
+    padding: 1em 1.5em;
+  }
+}
+
+ul#tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0.7em 0 0 0;
+  li {
+    ul {
+      border: 1px solid $border-color;
+      border-width: 1px 0;
+      border-radius: 12px;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+  }
+  li.folded:not(:last-child) {
+    border-bottom: 1px solid $border-color;
+  }
+  li ul {
+    background: rgba(0, 0, 0, 0.06);
+    #li ul {
+      #background: #eaeaea;
+    }
+  }
+}
+
+.modal {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 110;
+  & > div:last-child {
+    z-index: 110;
+    background: #fff;
+    border-radius: 5px;
+  }
+}
+
+.modal-backdrop {
+  z-index: 105;
+  background: rgba(0, 0, 0, 0.3);
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+// ****************************************
+// Start session view
+.begin-session {
+  color: #000;
+  background-color: #fff;
+  //position: absolute;
+  //right: $text-to-edge;
+  //top: 3em;
+  padding: $text-to-edge / 2;
+  text-align: center;
+  color: $sec-text-color;
+  h2 {
+    color: #000;
+    margin: $text-to-edge / 2 0;
+    font-size: 1.1em;
+    font-weight: 500;
+  }
+  table {
+    border-collapse: separate;
+    border-spacing: .2rem;
+    text-align: right;
+    line-height: 1em;
+    border-spacing: $text-to-edge / 4;
+    margin: -$text-to-edge / 4;
+  }
+  td {
+    width: 4em;
+  }
+  //transform: scale(0);
+  //transition: transform ease-in-out 0.2s,
+              //opacity ease-in-out 0.2s;
+  //opacity: 0;
+  //&.open {
+    //transform: scale(1);
+    //opacity: 1;
+  //}
+  .btn:active {
+    color: #fff;
+    background: $prm-color;
+  }
+}
