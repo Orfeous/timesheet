@@ -9,12 +9,7 @@ const h = require('snabbdom/h')
 const attachTo = require('snabbdom/helpers/attachto')
 const syncedDB = require('synceddb-client')
 
-const prmColor = '#801e74'
-const secColor = '#1cc6ae'
-
 var canvas, ctx
-var windowWidth = 0
-var canvasHeight = 0
 var containerRect = {width: 0, height: 0}
 
 const base03 = '#002b36'
@@ -34,19 +29,16 @@ const blue = '#268bd2'
 const cyan = '#2aa198'
 const green = '#859900'
 
-var scrollX = 0
-
 const SCROLL_UNDETERMINED = 0
 const SCROLL_VERTICAL = 1
 const SCROLL_HORIZONTAL = 2
 var scrollDirection = SCROLL_UNDETERMINED
 
-var lastPos = {x: 0, y: 0}
-
 var domRender
 
 // Helper functions
-const _ = undefined
+
+const _ = undefined // jshint ignore:line
 const noop = () => {}
 const part = (fn, ...args) => (...args2) => fn.apply(_, args.concat(args2))
 const pull = (elm, list) => (list.splice(list.indexOf(elm), 1), list)
@@ -60,6 +52,10 @@ const map = (fn, list) => {
   const res = []
   for (let i = 0, l = list.length; i < l; ++i) res[i] = fn(list[i])
   return res
+}
+const fold = (fn, acc, list) => {
+  for (let i = 0, l = list.length; i < l; ++i) acc = fn(acc, list[i])
+  return acc
 }
 const each = (fn, list) => {
   for (let i = 0, l = list.length; i < l; ++i) fn(list[i])
@@ -77,8 +73,15 @@ const find = (pred, list) => {
 }
 const prop = (name, obj) => obj[name]
 const contains = (elm, list) => list.indexOf(elm) !== -1
-Function.prototype.$ = function(...args) {
-  return (...args2) => this.apply(_, args.concat(args2))
+const inInterval = (n, l, h) => (l <= n && n <= h)
+Function.prototype.$ = function() {
+  var fn = this, args = arguments
+  return function() {
+    var res = [], i;
+    for (i = 0; i < args.length; ++i) res[i] = args[i]
+    for (i = 0; i < arguments.length; ++i) res[args.length + i] = arguments[i]
+    return fn.apply(undefined, res)
+  }
 }
 
 // Time stuff
@@ -97,10 +100,13 @@ const getMonth = (t) => (new Date(t)).getMonth()
 const now = Date.now
 
 // Snabbdom helpers
+
 const indentColorNames = ['yellow', 'orange', 'red', 'magenta', 'violet', 'blue', 'cyan', 'green']
 const indentColors = ['#b58900', '#cb4b16', '#dc322f', '#d33682', '#6c71c4', '#268bd2', '#2aa198', '#859900']
 const colorAtIndent = (n) => indentColors[isEven(n) ? n / 2 : (n - 1) / 2 + 4]
+
 // DOM helper functions
+
 const listen = (elm, event, cb) => elm.addEventListener(event, cb, false)
 const targetValue = (ev) => ev.target.value
 
@@ -111,8 +117,9 @@ const stores = {
     ['byParent', 'parent'],
     ['atRoot', 'atRoot'],
   ],
-  session: [
+  sessions: [
     ['byTask', 'taskKey'],
+    ['byStartTime', 'startTime']
   ]
 }
 const db = syncedDB.open({
@@ -123,60 +130,25 @@ const db = syncedDB.open({
 
 const putTask = (t) => db.tasks.put(t)
 
-/*
-const defaultTasks = [
-  {title: 'Eat pomegranate', open: false, children: [
-    {title: 'Hole fruit', open: false, children: []},
-    {title: 'Nasty smoothie', open: false, children: []},
-  ]},
-  {title: 'Snabbdom', open: false, children: [
-    {title: 'JSX', open: false, children: []},
-    {title: 'Animation documentation', open: false, children: [
-      {title: 'Delayed style', open: false, children: []},
-      {title: 'Hooks', open: false, children: []},
-    ]},
-    {title: 'SVG', open: false, children: []},
-    {title: 'Render to text', open: false, children: []},
-  ]},
-  {title: 'Timesheet', open: false, children: [
-    {title: 'Animations', open: false, children: [
-      {title: 'Unfold', open: false, children: []},
-      {title: 'Options buttons apperance', open: false, children: []},
-      {title: 'Something', open: false, children: []},
-      {title: 'Event more', open: false, children: []},
-    ]},
-    {title: 'Activity creation', open: false, children: [
-      {title: 'Bloah', open: false, children: []},
-      {title: 'Pli', open: false, children: []},
-      {title: 'Husly', open: false, children: []},
-    ]},
-  ]},
-  {title: 'Call housing association', open: false, children: []},
-]
-*/
-
 let state
 const defaultState = {
-  //tasks: defaultTasks,
   newTask: _,
   timeView: {startTime: now - halfWeek, endTime: now + halfWeek},
 }
-//const restoredState = localStorage.getItem('state')
-//const state = restoredState !== null ? JSON.parse(restoredState) : defaultState
-//const tasks = state.tasks
+
+const loadSessions = (node) =>
+  db.sessions.byTask.get(node.task.key).then((s) => node.sessions = s)
+
 
 const loadChildrenIfOpen = (node) => {
-  console.log('load children for', node.task.title)
   if (node.task.open === true) {
     return db.tasks.byParent.get(node.task.key).then((children) => {
-      console.log('children for', node.task.title)
-      console.log(children)
-      const childrenNodes = map((t) => ({task: t, children: []}), children)
+      const childrenNodes = map((t) => ({task: t, children: [], sessions: []}), children)
       node.children = childrenNodes
-      return Promise.all(map(loadChildrenIfOpen, childrenNodes))
-    })
+      return loadSessions(node)
+    }).then((sessions) => Promise.all(map(loadChildrenIfOpen, node.children)))
   } else {
-    return Promise.resolve()
+    return loadSessions(node)
   }
 }
 
@@ -184,10 +156,25 @@ const initializeState = () => {
   const restoredState = localStorage.getItem('state')
   const state = restoredState !== null ? JSON.parse(restoredState) : defaultState
   return db.tasks.atRoot.getAll().then((rootTasks) => {
-    const rootNodes = map((t) => ({task: t, children: []}), rootTasks)
+    const rootNodes = map((t) => ({task: t, children: [], sessions: []}), rootTasks)
     state.taskTree = rootNodes
     return Promise.all(map(loadChildrenIfOpen, rootNodes))
   }).then(() => state)
+}
+
+// Canvas rendering
+
+const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
+  const {task, sessions, children} = node
+  for (let s of sessions) {
+    if (inInterval(s.startTime, startTime, endTime) ||
+        inInterval(s.endTime, startTime, endTime)) {
+      ctx.fillRect((s.startTime - startTime) * msSize, offset * 52 + 24,
+                   (s.endTime - s.startTime) * msSize, 51)
+    }
+  }
+  return task.open === true ? fold(renderSessions.$(ctx, msSize, startTime, endTime), offset + 1, children)
+                            : offset + 1
 }
 
 const render = (canvas, ctx) => {
@@ -201,6 +188,7 @@ const render = (canvas, ctx) => {
   ctx.fillStyle = base2
   ctx.fillRect(0, 0, w, 24)
   ctx.fillStyle = base1
+  const msSize = containerRect.width / (state.timeView.endTime - state.timeView.startTime)
   const daysVisible = Math.ceil((state.timeView.endTime - state.timeView.startTime) / day) + 1
   const daySize = containerRect.width / ((state.timeView.endTime - state.timeView.startTime) / day)
   const startTime = state.timeView.startTime - (state.timeView.startTime % day)
@@ -216,6 +204,7 @@ const render = (canvas, ctx) => {
     let t = startTime + (i * day)
     ctx.fillText(getDate(t) + ' / ' + getMonth(t), -offset + i * daySize + 5, 15)
   }
+  fold(renderSessions.$(ctx, msSize, state.timeView.startTime, state.timeView.endTime), 0, state.taskTree)
 }
 
 const resizeCanvas = (canvas, {width: w, height: h}) => {
@@ -344,17 +333,27 @@ const toggleTimerModal = (task, ev) => {
   domRender()
 }
 
-const startTimer = (task, duration) => {
-  const now = Date.now()
-  task.timerModalOpen = false
-  task.timerStartedAt = now
-  task.timerEndsAt = duration !== _ ? now + duration : _
+const startTimer = (node, duration) => {
+  const startTime = now()
+  const session = {
+    taskKey: node.task.key,
+    startTime,
+    endTime: duration === _ ? 0 : startTime + duration
+  }
+  state.activeSession = {session, node}
+  node.task.timerModalOpen = false
+  db.sessions.put(session)
   domRender()
 }
 
-const endTimer = (task) => {
-  task.timerStartedAt = _
-  domRender()
+const endSession = (session, sessions) => {
+  //if (session.endTime === 0) session.endTime = now()
+  if (session.endTime === 0) session.endTime = (now() - session.startTime) * second + now()
+  db.sessions.put(session).then(() => {
+    state.activeSession = _
+    sessions.push(session)
+    domRender()
+  })
 }
 
 const toggleOptionsMenu = (task) => {
@@ -387,17 +386,15 @@ const createNewTask = ({parent, target, title}, ev) => {
   const createdTask = {title, open: false}
   console.log(target)
   if (parent === _) {
-    console.log('new task at root')
     createdTask.atRoot = 1
   } else {
-    console.log('adding key', parent.key)
     createdTask.parent = parent.key
     if (parent.hasSubtasks !== true) {
       parent.hasSubtasks = true
       putTask(parent)
     }
   }
-  target.push({task: createdTask, children: []})
+  target.push({task: createdTask, children: [], sessions: []})
   state.newTask = _
   putTask(createdTask)
   domRender()
@@ -415,9 +412,9 @@ const deleteTask = (node, parentChildren) => {
 
 // View
 
-const startTimerModal = (task) =>
+const startSessionModal = (node) =>
   h('div.begin-session', [
-    h('div.btn.btn-block', {on: {click: [startTimer, task, _]}}, 'Stop timer manually'),
+    h('div.btn.btn-block', {on: {click: [startTimer, node, _]}}, 'Stop timer manually'),
     h('h2', 'or after'),
     h('table', [
       h('tr', [
@@ -448,11 +445,12 @@ const startTimerModal = (task) =>
     ]),
   ])
 
-const timerModal = (task) =>
+const sessionModal = ({session, node}) =>
   h('div', [
     'Session started!', h('br'),
-    task.timerStartedAt, h('br'),
-    task.timerEndsAt || 'never ends',
+    session.startTime, h('br'),
+    session.endTime || 'never ends',
+    h('div.btn', {on: {click: [endSession, session, node.sessions]}}, 'End'),
   ])
 
 const createTaskModal = (newTask) =>
@@ -506,8 +504,7 @@ const vtask = (parentChildren, level, node) => {
       h('div.start-timing-btn', {on: {click: [toggleTimerModal, task]}}, [h('i.fa.fa-lg.fa-clock-o')]),
     ])),
     task.open ? h('ul', {style: {borderRadius: '0px'}}, map(vtask.$(children, level + 1), children)) : '',
-    task.timerModalOpen ? modal(startTimerModal(task), toggleTimerModal.$(task)) : '',
-    task.timerStartedAt ? modal(timerModal(task), endTimer.$(task)) : '',
+    task.timerModalOpen ? modal(startSessionModal(node), toggleTimerModal.$(task)) : '',
     task.showOptionsMenu ? modal(taskOptionsModal(parentChildren, node), toggleOptionsMenu.$(task)) : '',
   ])
 }
@@ -521,9 +518,10 @@ const vtree = (state) =>
     h('div.top-bar-filler'),
     h('canvas#canvas'),
     h('div#task-container', [
-      h('ul#tasks', state.taskTree.map(vtask.$(state.taskTree, 0))), // FIXME
+      h('ul#tasks', map(vtask.$(state.taskTree, 0), state.taskTree)),
       h('div.btn', {style: {margin: '.2em'}, on: {click: [beginCreateTask, _, state.taskTree]}}, 'Create task'),
       state.newTask ? modal(createTaskModal(state.newTask), dropNewTask) : '',
+      state.activeSession ? modal(sessionModal(state.activeSession), noop) : '',
     ])
   ])
 
