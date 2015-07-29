@@ -9,9 +9,6 @@ const h = require('snabbdom/h')
 const attachTo = require('snabbdom/helpers/attachto')
 const syncedDB = require('synceddb-client')
 
-var canvas, ctx
-var containerRect = {width: 0, height: 0}
-
 const base03 = '#002b36'
 const base02 = '#073642'
 const base01 = '#586e75'
@@ -32,12 +29,13 @@ const green = '#859900'
 const SCROLL_UNDETERMINED = 0
 const SCROLL_VERTICAL = 1
 const SCROLL_HORIZONTAL = 2
-var scrollDirection = SCROLL_UNDETERMINED
 
+var scrollDirection = SCROLL_UNDETERMINED
 var domRender
+var canvas, ctx
+var containerRect = {width: 0, height: 0}
 
 // Helper functions
-
 const _ = undefined // jshint ignore:line
 const noop = () => {}
 const part = (fn, ...args) => (...args2) => fn.apply(_, args.concat(args2))
@@ -48,6 +46,7 @@ const isLastOf = (elm, arr) => elm === last(arr)
 const log = (name, val) => (console.log(name, val), val)
 const isEven = (n) => n % 2 === 0
 const concat = (l1, l2) => l1.concat(l2)
+const prepend = (elm, l) => concat([elm], l)
 const map = (fn, list) => {
   const res = []
   for (let i = 0, l = list.length; i < l; ++i) res[i] = fn(list[i])
@@ -85,7 +84,6 @@ Function.prototype.$ = function() {
 }
 
 // Time stuff
-
 const millisecond = 1
 const second = 1000 * millisecond
 const minute = 60 * second
@@ -93,44 +91,41 @@ const hour = 60 * minute
 const day = 24 * hour
 const week = 7 * day
 const halfWeek = week / 2
-
 const getDate = (t) => (new Date(t)).getDate()
 const getMonth = (t) => (new Date(t)).getMonth()
-
 const now = Date.now
+const daysIn = (t) => Math.floor(t / day)
 
 // Snabbdom helpers
-
 const indentColorNames = ['yellow', 'orange', 'red', 'magenta', 'violet', 'blue', 'cyan', 'green']
 const indentColors = ['#b58900', '#cb4b16', '#dc322f', '#d33682', '#6c71c4', '#268bd2', '#2aa198', '#859900']
 const colorAtIndent = (n) => indentColors[isEven(n) ? n / 2 : (n - 1) / 2 + 4]
 const focus = (vnode) => vnode.elm.focus()
 
 // DOM helper functions
-
 const listen = (elm, event, cb) => elm.addEventListener(event, cb, false)
 const targetValue = (ev) => ev.target.value
 
 // Database
-
 const stores = {
   tasks: [
     ['byParent', 'parent'],
     ['atRoot', 'atRoot'],
   ],
   sessions: [
-    ['byTask', 'taskKey'],
-    ['byStartTime', 'startTime']
+    ['byTask', 'taskKeys', {multiEntry: true}],
+    ['byStartTime', 'startTime'],
+    ['byDay', 'day'],
   ]
 }
 const db = syncedDB.open({
   name: 'timeApp',
-  version: 1,
+  version: 2,
   stores: stores,
 })
-
 const putTask = (t) => db.tasks.put(t)
 
+// State
 let state
 const defaultState = {
   newTask: _,
@@ -140,11 +135,10 @@ const defaultState = {
 const loadSessions = (node) =>
   db.sessions.byTask.get(node.task.key).then((s) => node.sessions = s)
 
-
 const loadChildrenIfOpen = (node) => {
   if (node.task.open === true) {
     return db.tasks.byParent.get(node.task.key).then((children) => {
-      const childrenNodes = map((t) => ({task: t, children: [], sessions: []}), children)
+      const childrenNodes = map((t) => taskNode(node, t), children)
       node.children = childrenNodes
       return loadSessions(node)
     }).then((sessions) => Promise.all(map(loadChildrenIfOpen, node.children)))
@@ -157,7 +151,7 @@ const initializeState = () => {
   const restoredState = localStorage.getItem('state')
   const state = restoredState !== null ? JSON.parse(restoredState) : defaultState
   return db.tasks.atRoot.getAll().then((rootTasks) => {
-    const rootNodes = map((t) => ({task: t, children: [], sessions: []}), rootTasks)
+    const rootNodes = map((t) => taskNode(undefined, t), rootTasks)
     state.taskTree = rootNodes
     return Promise.all(map(loadChildrenIfOpen, rootNodes))
   }).then(() => state)
@@ -178,6 +172,15 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
                             : offset + 1
 }
 
+let msSize, daysVisible, daySize, startTime, offset
+const calcGrid = () => {
+  msSize = containerRect.width / (state.timeView.endTime - state.timeView.startTime)
+  daysVisible = Math.ceil((state.timeView.endTime - state.timeView.startTime) / day) + 1
+  daySize = containerRect.width / ((state.timeView.endTime - state.timeView.startTime) / day)
+  startTime = state.timeView.startTime - (state.timeView.startTime % day)
+  offset = (state.timeView.startTime % day) / day * daySize
+}
+
 const render = (canvas, ctx) => {
   const w = canvas.width
   const h = canvas.height
@@ -189,22 +192,24 @@ const render = (canvas, ctx) => {
   ctx.fillStyle = base2
   ctx.fillRect(0, 0, w, 24)
   ctx.fillStyle = base1
-  const msSize = containerRect.width / (state.timeView.endTime - state.timeView.startTime)
-  const daysVisible = Math.ceil((state.timeView.endTime - state.timeView.startTime) / day) + 1
-  const daySize = containerRect.width / ((state.timeView.endTime - state.timeView.startTime) / day)
-  const startTime = state.timeView.startTime - (state.timeView.startTime % day)
-  const offset = (state.timeView.startTime % day) / day * daySize
-  for (let i = 0; i < daysVisible; ++i) {
+  const showHours = (state.timeView.endTime - state.timeView.startTime) < day
+  const lineTime = showHours ? hour
+                             : day
+  const lineDist = showHours ? daySize / 24
+                             : daySize
+  const endTime = state.timeView.endTime
+  for (let i = 0; startTime + i * lineTime < endTime; ++i) {
     ctx.fillStyle = base1
-    ctx.fillRect(-offset + i * daySize, 0, 1, 24)
+    ctx.fillRect(-offset + i * lineDist, 0, 1, 24)
     ctx.fillStyle = base2
-    ctx.fillRect(-offset + i * daySize, 24, 1, h-24)
+    ctx.fillRect(-offset + i * lineDist, 24, 1, h-24)
   }
   ctx.fillStyle = base00
   for (let i = 0; i < daysVisible; ++i) {
     let t = startTime + (i * day)
     ctx.fillText(getDate(t) + ' / ' + getMonth(t), -offset + i * daySize + 5, 15)
   }
+  ctx.fillStyle = base2
   fold(renderSessions.$(ctx, msSize, state.timeView.startTime, state.timeView.endTime), 0, state.taskTree)
 }
 
@@ -244,11 +249,14 @@ const updateContainerRect = () => {
   const rect = document.getElementById('task-container').getBoundingClientRect()
   containerRect.width = rect.width | 0
   containerRect.height = rect.height | 0
+  calcGrid()
 }
 
 // Handle gestures
 
 var touchesDown = []
+
+const findTouch = (id, touches) => find((t) => t.identifier === id, touches)
 
 const touchStart = (ev) => {
   scrollDirection = SCROLL_UNDETERMINED
@@ -270,31 +278,29 @@ const touchMove = (ev) => {
   if (touchesDown.length === 1) {
     const t = touchesDown[0]
     const moved = find((moved) => moved.identifier === t.id, ev.changedTouches)
-    if (moved !== _) {
-      const x = moved.pageX
-      const y = moved.pageY
-      if (scrollDirection === SCROLL_UNDETERMINED) {
-        if (Math.abs(x - t.x) > 30) {
-          ev.preventDefault()
-          scrollDirection = SCROLL_HORIZONTAL
-          t.x = x
-          t.y = y
-        } else if (Math.abs(y - t.y) > 30) {
-          scrollDirection = SCROLL_VERTICAL
-        }
-      } else if (scrollDirection === SCROLL_HORIZONTAL) {
+    if (moved === _) return
+    const {pageX: x, pageY: y} = moved
+    if (scrollDirection === SCROLL_UNDETERMINED) {
+      if (Math.abs(x - t.x) > 30) {
         ev.preventDefault()
-        const pixelSize = (state.timeView.endTime - state.timeView.startTime) / containerRect.width
-        state.timeView.startTime -= (x - t.x) * pixelSize
-        state.timeView.endTime -= (x - t.x) * pixelSize
+        scrollDirection = SCROLL_HORIZONTAL
         t.x = x
         t.y = y
+      } else if (Math.abs(y - t.y) > 30) {
+        scrollDirection = SCROLL_VERTICAL
       }
+    } else if (scrollDirection === SCROLL_HORIZONTAL) {
+      ev.preventDefault()
+      const pixelSize = (state.timeView.endTime - state.timeView.startTime) / containerRect.width
+      state.timeView.startTime -= (x - t.x) * pixelSize
+      state.timeView.endTime -= (x - t.x) * pixelSize
+      t.x = x
+      t.y = y
     }
   } else {
     const t1 = touchesDown[0], t2 = touchesDown[1]
-    const m1 = find((t) => t.identifier === t1.id, ev.touches)
-    const m2 = find((t) => t.identifier === t2.id, ev.touches)
+    const m1 = findTouch(t1.id, ev.touches)
+    const m2 = findTouch(t2.id, ev.touches)
     const nRelX1 = m1.screenX / containerRect.width
     const nRelX2 = m2.screenX / containerRect.width
     const timeViewDur = state.timeView.endTime - state.timeView.startTime
@@ -308,12 +314,15 @@ const touchMove = (ev) => {
     t2.x = m2.screenX
     t2.y = m2.screenY
   }
+  calcGrid()
 }
 
 const notify = () => {
   console.log('notify')
   navigator.vibrate([100, 100, 100, 300, 300])
 }
+
+const taskNode = (parent, task) => ({task, parent, children: [], sessions: []})
 
 // Modify state
 
@@ -337,11 +346,16 @@ const toggleTimerModal = (task, ev) => {
   domRender()
 }
 
-const startTimer = (node, duration) => {
+const walkUpNodes = (acc, node) => node.parent ? walkUpNodes(concat([node], acc), node.parent)
+                                               : concat([node], acc)
+
+const createSession = (node, duration) => {
   const startTime = now()
+  const keys = map(prop.$('key'), map(prop.$('task'), walkUpNodes([], node)))
   const session = {
-    taskKey: node.task.key,
+    taskKeys: keys,
     startTime,
+    day: daysIn(startTime),
     endTime: duration === _ ? 0 : startTime + duration
   }
   state.activeSession = {session, node}
@@ -350,12 +364,13 @@ const startTimer = (node, duration) => {
   domRender()
 }
 
-const endSession = (session, sessions) => {
-  if (session.endTime === 0) session.endTime = now()
-  //if (session.endTime === 0) session.endTime = (now() - session.startTime) * second + now()
+const endSession = (session, node) => {
+  //if (session.endTime === 0) session.endTime = now()
+  if (session.endTime === 0) session.endTime = now() + hour
   db.sessions.put(session).then(() => {
     state.activeSession = _
-    sessions.push(session)
+    const sessionsLists = map(prop.$('sessions'), walkUpNodes([], node))
+    each((sessions) => sessions.push(session), sessionsLists)
     domRender()
   })
 }
@@ -365,14 +380,14 @@ const toggleOptionsMenu = (task) => {
   domRender()
 }
 
-const beginCreateTask = (parent, target) => {
-  console.log('begin create task', parent)
-  if (parent !== _) {
+const beginCreateTask = (parentNode, target) => {
+  if (parentNode !== _) {
+    const parent = parentNode.task
     parent.showOptionsMenu = false
     parent.open = true
     putTask(parent)
   }
-  state.newTask = {title: '', target, parent}
+  state.newTask = {title: '', target, parentNode}
   domRender()
 }
 
@@ -385,20 +400,20 @@ const updateNewSubtaskTitle = (task, ev) => {
   state.newTask.title = targetValue(ev)
 }
 
-const createNewTask = ({parent, target, title}, ev) => {
+const createNewTask = ({parentNode, target, title}, ev) => {
   ev.preventDefault()
   const createdTask = {title, open: false}
-  console.log(target)
-  if (parent === _) {
+  if (parentNode === _) {
     createdTask.atRoot = 1
   } else {
+    const parent = parentNode.task
     createdTask.parent = parent.key
     if (parent.hasSubtasks !== true) {
       parent.hasSubtasks = true
       putTask(parent)
     }
   }
-  target.push({task: createdTask, children: [], sessions: []})
+  target.push(taskNode(parent, createdTask))
   state.newTask = _
   putTask(createdTask)
   domRender()
@@ -418,7 +433,7 @@ const deleteTask = (node, parentChildren) => {
 
 const startSessionModal = (node) =>
   h('div.begin-session', [
-    h('div.btn.btn-block', {on: {click: [startTimer, node, _]}}, 'Stop timer manually'),
+    h('div.btn.btn-block', {on: {click: [createSession, node, _]}}, 'Stop timer manually'),
     h('h2', 'or after'),
     h('table', [
       h('tr', [
@@ -454,7 +469,7 @@ const sessionModal = ({session, node}) =>
     'Session started!', h('br'),
     session.startTime, h('br'),
     session.endTime || 'never ends',
-    h('div.btn', {on: {click: [endSession, session, node.sessions]}}, 'End'),
+    h('div.btn', {on: {click: [endSession, session, node]}}, 'End'),
   ])
 
 const createTaskModal = (newTask) =>
@@ -473,7 +488,7 @@ const createTaskModal = (newTask) =>
 
 const taskOptionsModal = (parentChildren, node) =>
   h('div', {style: {}}, [
-    h('div.btn.btn-block', {style: {marginBottom: '.5em'}, on: {click: [beginCreateTask, node.task, node.children]}}, 'Create subtask'),
+    h('div.btn.btn-block', {style: {marginBottom: '.5em'}, on: {click: [beginCreateTask, node, node.children]}}, 'Create subtask'),
     h('div.btn.btn-block.btn-danger', {on: {click: [deleteTask, node, parentChildren]}}, 'Delete task'),
   ])
 
@@ -542,7 +557,17 @@ const domRenderer = () => {
       state.timeView = {startTime: now() - halfWeek, endTime: now() + halfWeek}
     }
     oldVtree = patch(oldVtree, vtree(state))
+    const taskTree = state.taskTree
+    const newTask = state.newTask
+    const activeSession = state.activeSession
+    state.taskTree = undefined
+    state.newTask = undefined
+    state.activeSession = undefined
+    console.log(state)
     localStorage.setItem('state', JSON.stringify(state))
+    state.taskTree = taskTree
+    state.newTask = newTask
+    state.activeSession = activeSession
   }
 }
 
