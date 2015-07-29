@@ -1,7 +1,7 @@
 const snabbdom = require('snabbdom');
 const patch = snabbdom.init([
   require('snabbdom/modules/class'),
-  require('snabbdom/modules/hero'),
+  require('snabbdom/modules/props'),
   require('snabbdom/modules/style'),
   require('snabbdom/modules/eventlisteners'),
 ])
@@ -104,6 +104,7 @@ const now = Date.now
 const indentColorNames = ['yellow', 'orange', 'red', 'magenta', 'violet', 'blue', 'cyan', 'green']
 const indentColors = ['#b58900', '#cb4b16', '#dc322f', '#d33682', '#6c71c4', '#268bd2', '#2aa198', '#859900']
 const colorAtIndent = (n) => indentColors[isEven(n) ? n / 2 : (n - 1) / 2 + 4]
+const focus = (vnode) => vnode.elm.focus()
 
 // DOM helper functions
 
@@ -217,8 +218,6 @@ const resizeCanvas = (canvas, {width: w, height: h}) => {
 
 listen(document, 'DOMContentLoaded', () => {
   initializeState().then((initState) => {
-    console.log('state inited')
-    console.log(initState)
     state = initState
     domRender = domRenderer()
     domRender()
@@ -311,6 +310,11 @@ const touchMove = (ev) => {
   }
 }
 
+const notify = () => {
+  console.log('notify')
+  navigator.vibrate([100, 100, 100, 300, 300])
+}
+
 // Modify state
 
 const toggleFold = (node) => {
@@ -347,8 +351,8 @@ const startTimer = (node, duration) => {
 }
 
 const endSession = (session, sessions) => {
-  //if (session.endTime === 0) session.endTime = now()
-  if (session.endTime === 0) session.endTime = (now() - session.startTime) * second + now()
+  if (session.endTime === 0) session.endTime = now()
+  //if (session.endTime === 0) session.endTime = (now() - session.startTime) * second + now()
   db.sessions.put(session).then(() => {
     state.activeSession = _
     sessions.push(session)
@@ -418,8 +422,8 @@ const startSessionModal = (node) =>
     h('h2', 'or after'),
     h('table', [
       h('tr', [
-        h('td.btn', '10s'),
-        h('td.btn', '5m'),
+        h('td.btn', {on: {click: notify}}, '0s'),
+        h('td.btn', {on: {click: [setTimeout, notify, 5000]}}, '5s'),
         h('td.btn', '10m'),
       ]),
       h('tr', [
@@ -454,10 +458,16 @@ const sessionModal = ({session, node}) =>
   ])
 
 const createTaskModal = (newTask) =>
-  h('div', [
+  h('div', {
+    style: {alignSelf: 'flex-end'},
+  }, [
     h('h2', 'Create subtask'),
     h('form', {on: {submit: createNewTask.$(newTask)}}, [
-        h('input', {on: {input: updateNewSubtaskTitle.$(newTask)}})
+      h('input.block-input', {
+        on: {input: updateNewSubtaskTitle.$(newTask)},
+        props: {type: 'text', placeholder: 'Task title'},
+        hook: {insert: focus}
+      })
     ])
   ])
 
@@ -470,8 +480,8 @@ const taskOptionsModal = (parentChildren, node) =>
 const foldIndicator = (node) =>
   h('div.fold-indicator', {
     on: {click: [toggleFold, node]},
-  }, [h('i.fa.fa-chevron-right', {
-    style: {transform: `rotate(${node.task.open ? 90 : 0}deg)`},
+  }, [h('i.fa.fa-chevron-down', {
+    style: {transform: `rotate(${node.task.open ? 0 : -90}deg)`},
   })])
 
 const doneCheckbox = (task) =>

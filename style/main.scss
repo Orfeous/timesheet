@@ -26,6 +26,21 @@ $short-dur: 60ms;
 $med-dur: 200ms;
 $long-dur: 350ms;
 
+html, body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  font: 100% $font-stack;
+}
+
+canvas {
+  display: block;
+  position: absolute;
+  z-index: -1;
+}
+
 @mixin base-btn($color) {
   display: inline-block;
   color: #fff;
@@ -57,23 +72,17 @@ $long-dur: 350ms;
   @include base-btn(#E23670);
 }
 
+.block-input {
+  //line-height: 2.2em;
+  padding: .5em;
+  border: 1px solid $base2;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .btn-block {
   display: block;
-}
-
-html, body {
-  padding: 0;
-  margin: 0;
-}
-
-body {
-  font: 100% $font-stack;
-}
-
-canvas {
-  display: block;
-  position: absolute;
-  z-index: -1;
 }
 
 // Top bar
@@ -94,11 +103,11 @@ canvas {
 
 .app-name {
   flex-grow: 1;
-  padding: .6em 0 .6em 2.3em;
+  padding: .6em 0 .6em 16px;
 }
 
 .menu-btn {
-  padding: .6em .7em .6em .7em;
+  padding: .6em 16px .6em .7em;
 }
 
 .top-bar-filler {
@@ -138,10 +147,10 @@ canvas {
 
 .fold-indicator {
   text-align: center;
-  padding: 1em 1em 1em 1em;
+  padding: 1em 1em 1em $text-to-edge;
   i {
     transition: transform ease-in-out $med-dur;
-    width: 1.4em;
+    width: 26px;
   }
 }
 
@@ -157,7 +166,7 @@ canvas {
 .task-line {
   display: flex;
   border-bottom: 1px solid $base2;
-  //text-shadow: -1px -1px 0 $bg-color,  
+  //text-shadow: -1px -1px 0 $bg-color,
                 //1px -1px 0 $bg-color,
                //-1px 1px 0 $bg-color,
                 //1px 1px 0 $bg-color;
@@ -176,11 +185,13 @@ canvas {
 .indent-indicator {
   position: absolute;
   width: 2px;
+  border: 1px solid $base3;
+  border-width: 0 1px;
   top: 0;
   bottom: -1px;
-  left: 1.7em;
+  left: ($text-to-edge + 13 - 2);
   background: rgba($prm-color, 0.4);
-  opacity: .6;
+  //opacity: .6;
   z-index: -1;
 }
 
@@ -210,8 +221,9 @@ canvas {
   & > div:last-child {
     z-index: 110;
     background: $bg-color;
-    padding: .5em;
-    border-radius: 5px;
+    padding: $text-to-edge;
+    border-radius: 5px 5px 0 0;
+    width: 100%;
   }
 }
 
