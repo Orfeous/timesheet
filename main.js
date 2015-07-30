@@ -45,8 +45,14 @@ const last = (arr) => arr[arr.length - 1]
 const isLastOf = (elm, arr) => elm === last(arr)
 const log = (name, val) => (console.log(name, val), val)
 const isEven = (n) => n % 2 === 0
+const isEmpty = (l) => l.length === 0
+const notEmpty = (l) => l.length > 0
+const hasTail = (l) => l.length > 1
 const concat = (l1, l2) => l1.concat(l2)
 const prepend = (elm, l) => concat([elm], l)
+const append = (elm, l) => concat(l, [elm])
+const head = (l) => l[0]
+const tail = (l) => l.slice(1)
 const map = (fn, list) => {
   const res = []
   for (let i = 0, l = list.length; i < l; ++i) res[i] = fn(list[i])
@@ -71,6 +77,7 @@ const find = (pred, list) => {
   }
 }
 const prop = (name, obj) => obj[name]
+const setProp = (name, val, obj) => obj[name] = val
 const contains = (elm, list) => list.indexOf(elm) !== -1
 const inInterval = (n, l, h) => (l <= n && n <= h)
 Function.prototype.$ = function() {
@@ -115,12 +122,13 @@ const stores = {
   sessions: [
     ['byTask', 'taskKeys', {multiEntry: true}],
     ['byStartTime', 'startTime'],
+    ['byEndTime', 'endTime', {multiEntry: false}],
     ['byDay', 'day'],
   ]
 }
 const db = syncedDB.open({
   name: 'timeApp',
-  version: 2,
+  version: 1,
   stores: stores,
 })
 const putTask = (t) => db.tasks.put(t)
@@ -132,8 +140,15 @@ const defaultState = {
   timeView: {startTime: now - halfWeek, endTime: now + halfWeek},
 }
 
+const isSessionDone = (s) => s.endTime !== 0 && now() < s.endTime
+
 const loadSessions = (node) =>
-  db.sessions.byTask.get(node.task.key).then((s) => node.sessions = s)
+  db.sessions.byTask.get(node.task.key).then((s) => node.sessions = filter(isSessionDone, s))
+
+const loadSessionsEndingAfterNow = () => db.sessions.byEndTime.inRange({gte: now()})
+const loadSessionsEndingAtZero = () => db.sessions.byEndTime.get(0)
+const loadActiveSessions = () =>
+  loadSessionsEndingAfterNow().then((l) => notEmpty(l) ? l : loadSessionsEndingAtZero())
 
 const loadChildrenIfOpen = (node) => {
   if (node.task.open === true) {
@@ -154,7 +169,13 @@ const initializeState = () => {
     const rootNodes = map((t) => taskNode(undefined, t), rootTasks)
     state.taskTree = rootNodes
     return Promise.all(map(loadChildrenIfOpen, rootNodes))
-  }).then(() => state)
+  }).then(loadActiveSessions).then((s) => {
+    log('active sessions', s);
+    if (notEmpty(s)) {
+      state.activeSession = head(s)
+    }
+    return state
+  })
 }
 
 // Canvas rendering
@@ -193,10 +214,8 @@ const render = (canvas, ctx) => {
   ctx.fillRect(0, 0, w, 24)
   ctx.fillStyle = base1
   const showHours = (state.timeView.endTime - state.timeView.startTime) < day
-  const lineTime = showHours ? hour
-                             : day
-  const lineDist = showHours ? daySize / 24
-                             : daySize
+  const lineTime = showHours ? hour : day
+  const lineDist = showHours ? daySize / 24 : daySize
   const endTime = state.timeView.endTime
   for (let i = 0; startTime + i * lineTime < endTime; ++i) {
     ctx.fillStyle = base1
@@ -253,7 +272,6 @@ const updateContainerRect = () => {
 }
 
 // Handle gestures
-
 var touchesDown = []
 
 const findTouch = (id, touches) => find((t) => t.identifier === id, touches)
@@ -318,7 +336,6 @@ const touchMove = (ev) => {
 }
 
 const notify = () => {
-  console.log('notify')
   navigator.vibrate([100, 100, 100, 300, 300])
 }
 
@@ -349,6 +366,14 @@ const toggleTimerModal = (task, ev) => {
 const walkUpNodes = (acc, node) => node.parent ? walkUpNodes(concat([node], acc), node.parent)
                                                : concat([node], acc)
 
+const findTask = (key, list) => find((n) => n.task.key === key, list)
+const walkDown = (found, keys, nodes) => {
+  const node = findTask(head(keys), nodes);
+  return hasTail(keys) ? walkDown(append(node, found), tail(keys), node.children)
+                       : append(node, found)
+}
+const walkTreeByTaskKey = (keys, nodes) => walkDown([], keys, nodes)
+
 const createSession = (node, duration) => {
   const startTime = now()
   const keys = map(prop.$('key'), map(prop.$('task'), walkUpNodes([], node)))
@@ -358,18 +383,17 @@ const createSession = (node, duration) => {
     day: daysIn(startTime),
     endTime: duration === _ ? 0 : startTime + duration
   }
-  state.activeSession = {session, node}
+  state.activeSession = session
   node.task.timerModalOpen = false
   db.sessions.put(session)
   domRender()
 }
 
-const endSession = (session, node) => {
-  //if (session.endTime === 0) session.endTime = now()
-  if (session.endTime === 0) session.endTime = now() + hour
+const endSession = (session) => {
+  if (session.endTime === 0) session.endTime = now()
   db.sessions.put(session).then(() => {
     state.activeSession = _
-    const sessionsLists = map(prop.$('sessions'), walkUpNodes([], node))
+    const sessionsLists = map(prop.$('sessions'), walkTreeByTaskKey(session.taskKeys, state.taskTree))
     each((sessions) => sessions.push(session), sessionsLists)
     domRender()
   })
@@ -464,12 +488,12 @@ const startSessionModal = (node) =>
     ]),
   ])
 
-const sessionModal = ({session, node}) =>
+const sessionModal = (session) =>
   h('div', [
     'Session started!', h('br'),
     session.startTime, h('br'),
     session.endTime || 'never ends',
-    h('div.btn', {on: {click: [endSession, session, node]}}, 'End'),
+    h('div.btn', {on: {click: [endSession, session]}}, 'End'),
   ])
 
 const createTaskModal = (newTask) =>
@@ -488,8 +512,12 @@ const createTaskModal = (newTask) =>
 
 const taskOptionsModal = (parentChildren, node) =>
   h('div', {style: {}}, [
-    h('div.btn.btn-block', {style: {marginBottom: '.5em'}, on: {click: [beginCreateTask, node, node.children]}}, 'Create subtask'),
-    h('div.btn.btn-block.btn-danger', {on: {click: [deleteTask, node, parentChildren]}}, 'Delete task'),
+    h('div.btn.btn-block', {
+      style: {marginBottom: '.5em'}, on: {click: [beginCreateTask, node, node.children]}
+    }, [h('i.fa.fa-plus'), 'Create subtask']),
+    h('div.btn.btn-block.btn-danger', {
+      on: {click: [deleteTask, node, parentChildren]}
+    }, [h('i.fa.fa-times'), 'Delete task']),
   ])
 
 const foldIndicator = (node) =>
