@@ -158,6 +158,8 @@ canvas {
 }
 
 #task-container {
+  position: absolute;
+  width: 100%;
   padding-top: 1.5em;
   ul {
     list-style: none;
@@ -168,21 +170,26 @@ canvas {
 
 .task-line {
   display: flex;
-  border-bottom: 1px solid $base2;
-  //text-shadow: -1px -1px 0 $bg-color,
-                //1px -1px 0 $bg-color,
-               //-1px 1px 0 $bg-color,
-                //1px 1px 0 $bg-color;
-  text-shadow: -1px 0px 0 $bg-color,  
+  position: absolute;
+  width: 100%;
+  border: 1px solid $base2;
+  border-width: 1px 0;
+  text-shadow: -1px 0px 0 $bg-color,
                 0px 1px 0 $bg-color,
                 0px -1px 0 $bg-color,
                 1px 0px 0 $bg-color,
-               -1px -1px 0 $bg-color,  
+               -1px -1px 0 $bg-color,
                 1px -1px 0 $bg-color,
                -1px 1px 0 $bg-color,
                 1px 1px 0 $bg-color;
   transition: opacity ease-in-out $med-dur,
-              transform ease-in-out $med-dur;
+              transform $med-dur ease-in-out;
+}
+
+.after-tasks {
+  position: absolute;
+  transition: transform ease-in-out $med-dur;
+  padding-top: 1.5em;
 }
 
 .indent-indicator {
@@ -190,7 +197,7 @@ canvas {
   width: 2px;
   border: 1px solid $base3;
   border-width: 0 1px;
-  top: 0;
+  top: -1px;
   bottom: -1px;
   left: ($text-to-edge + 11 - 2);
   background: rgba($prm-color, 0.4);

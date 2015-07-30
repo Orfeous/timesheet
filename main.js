@@ -9,6 +9,7 @@ const h = require('snabbdom/h')
 const attachTo = require('snabbdom/helpers/attachto')
 const syncedDB = require('synceddb-client')
 
+// Colors
 const base03 = '#002b36'
 const base02 = '#073642'
 const base01 = '#586e75'
@@ -25,6 +26,9 @@ const violet = '#6c71c4'
 const blue = '#268bd2'
 const cyan = '#2aa198'
 const green = '#859900'
+
+// Animation durations
+const medDur = 200
 
 const SCROLL_UNDETERMINED = 0
 const SCROLL_VERTICAL = 1
@@ -71,6 +75,8 @@ const fromTo = (i, n) => {
   return res
 }
 const eq = (n, m) => n === m
+const add = (n, m) => n + m
+const sum = (list) => fold(add, 0, list)
 const find = (pred, list) => {
   for (let i = 0, l = list.length; i < l; ++i) {
     if (pred(list[i])) return list[i]
@@ -107,6 +113,7 @@ const daysIn = (t) => Math.floor(t / day)
 const indentColorNames = ['yellow', 'orange', 'red', 'magenta', 'violet', 'blue', 'cyan', 'green']
 const indentColors = ['#b58900', '#cb4b16', '#dc322f', '#d33682', '#6c71c4', '#268bd2', '#2aa198', '#859900']
 const colorAtIndent = (n) => indentColors[isEven(n) ? n / 2 : (n - 1) / 2 + 4]
+const delayRm = (t) => (_, cb) => setTimeout(cb, t)
 const focus = (vnode) => vnode.elm.focus()
 
 // DOM helper functions
@@ -140,10 +147,10 @@ const defaultState = {
   timeView: {startTime: now - halfWeek, endTime: now + halfWeek},
 }
 
-const isSessionDone = (s) => s.endTime !== 0 && now() < s.endTime
+const isSessionDone = (s) => s.endTime !== 0 && now() > s.endTime
 
 const loadSessions = (node) =>
-  db.sessions.byTask.get(node.task.key).then((s) => node.sessions = filter(isSessionDone, s))
+  db.sessions.byTask.get(node.task.key).then((s) => node.sessions = log('ses', filter(isSessionDone, s)))
 
 const loadSessionsEndingAfterNow = () => db.sessions.byEndTime.inRange({gte: now()})
 const loadSessionsEndingAtZero = () => db.sessions.byEndTime.get(0)
@@ -170,7 +177,6 @@ const initializeState = () => {
     state.taskTree = rootNodes
     return Promise.all(map(loadChildrenIfOpen, rootNodes))
   }).then(loadActiveSessions).then((s) => {
-    log('active sessions', s);
     if (notEmpty(s)) {
       state.activeSession = head(s)
     }
@@ -186,7 +192,7 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
     if (inInterval(s.startTime, startTime, endTime) ||
         inInterval(s.endTime, startTime, endTime)) {
       ctx.fillRect((s.startTime - startTime) * msSize, offset * 52 + 24,
-                   (s.endTime - s.startTime) * msSize, 51)
+                   (s.endTime - s.startTime) * msSize, 52)
     }
   }
   return task.open === true ? fold(renderSessions.$(ctx, msSize, startTime, endTime), offset + 1, children)
@@ -343,10 +349,22 @@ const taskNode = (parent, task) => ({task, parent, children: [], sessions: []})
 
 // Modify state
 
-const toggleFold = (node) => {
+const FOLD_IN = 0, FOLD_OUT = 1
+let foldedAt = 0
+let foldDiff = 0
+let foldDir = FOLD_OUT
+
+const toggleFold = (pos, nPos, node) => {
   const task = node.task
+  foldDir = task.open ? FOLD_IN : FOLD_OUT
+  foldedAt = pos
+  if (foldDir === FOLD_IN) {
+    foldDiff = nPos - pos - 1
+    domRender()
+  }
   task.open = !task.open
   putTask(task).then(() => loadChildrenIfOpen(node)).then(() => {
+    if (task.open) foldDiff = countChildren(node)
     domRender()
     updateContainerRect()
   })
@@ -365,7 +383,7 @@ const toggleTimerModal = (task, ev) => {
 
 const walkUpNodes = (acc, node) => node.parent ? walkUpNodes(concat([node], acc), node.parent)
                                                : concat([node], acc)
-
+const countChildren = (node) => node.children.length + sum(map(countChildren, node.children))
 const findTask = (key, list) => find((n) => n.task.key === key, list)
 const walkDown = (found, keys, nodes) => {
   const node = findTask(head(keys), nodes);
@@ -375,7 +393,7 @@ const walkDown = (found, keys, nodes) => {
 const walkTreeByTaskKey = (keys, nodes) => walkDown([], keys, nodes)
 
 const createSession = (node, duration) => {
-  const startTime = now()
+  const startTime = now() - hour
   const keys = map(prop.$('key'), map(prop.$('task'), walkUpNodes([], node)))
   const session = {
     taskKeys: keys,
@@ -520,9 +538,9 @@ const taskOptionsModal = (parentChildren, node) =>
     }, [h('i.fa.fa-times'), 'Delete task']),
   ])
 
-const foldIndicator = (node) =>
+const foldIndicator = (pos, nPos, node) =>
   h('div.fold-indicator', {
-    on: {click: [toggleFold, node]},
+    on: {click: [toggleFold, pos, nPos, node]},
   }, [h('i.fa.fa-chevron-down', {
     style: {transform: `rotate(${node.task.open ? 0 : -90}deg)`},
   })])
@@ -532,22 +550,25 @@ const doneCheckbox = (task) =>
     on: {click: [toggleDone, task]},
   }, [task.done ? h('i.fa.fa-check-square') : h('i.fa.fa-square-o')])
 
-const vtask = (parentChildren, level, node) => {
+const vtask = (parentChildren, level, [pos, nodes], node) => {
   const {task, children} = node
-  const isLast = parentChildren && isLastOf(node, parentChildren)
-  const indentationChange = task.open || isLast
-  return h('li.task', {
+  const [newPos, subTasks] = task.open ? fold(vtask.$(children, level + 1), [pos + 1, []], children)
+                                       : [pos + 1, []]
+  return [newPos, append(h('li.task', {
     class: {folded: !task.open},
   }, [
     h('div.task-line', {
-      style: {opacity: 0, transform: 'translateY(0px)',
-              delayed: {opacity: 1, transform: 'translateY(0px)'}},
+      style: {opacity: 0, transform: `translateY(${pos*52}px)`,
+              transitionDuration: `${medDur}ms, ${foldDiff*medDur/2}ms`,
+              transitionDelay: `${(pos-foldedAt)*medDur/2}ms, ${foldDir===FOLD_IN?medDur/2:0}ms`,
+              delayed: {opacity: 1, transform: `translateY(${pos*52}px)`},
+              destroy: {opacity: 0, transitionDelay: `${(foldDiff-(pos-foldedAt))*medDur/2}ms, 0ms`}},
     },
     map((l) => h('div.indent-indicator', {
       class: {'indent-faded': l !== level},
       style: {marginLeft: `${l}em`, backgroundColor: colorAtIndent(l)}
     }), fromTo(0, level)).concat([
-      task.hasSubtasks ? foldIndicator(node) : doneCheckbox(task),
+      task.hasSubtasks ? foldIndicator(pos, newPos, node) : doneCheckbox(task),
       h('div.title-container', {
         on: {click: [toggleOptionsMenu, task]},
       }, [h('span.title', {
@@ -556,27 +577,38 @@ const vtask = (parentChildren, level, node) => {
       }, task.title)]),
       h('div.start-timing-btn', {on: {click: [toggleTimerModal, task]}}, [h('i.fa.fa-lg.fa-clock-o')]),
     ])),
-    task.open ? h('ul', {style: {borderRadius: '0px'}}, map(vtask.$(children, level + 1), children)) : '',
+    notEmpty(subTasks) ? h('ul', {hook: {remove: delayRm((newPos-pos-1)*medDur)}}, subTasks) : '',
     task.timerModalOpen ? modal(startSessionModal(node), toggleTimerModal.$(task)) : '',
     task.showOptionsMenu ? modal(taskOptionsModal(parentChildren, node), toggleOptionsMenu.$(task)) : '',
-  ])
+  ]), nodes)]
 }
 
-const vtree = (state) =>
-  h('div#container', [
+const vtree = (state) => {
+  const [nTasks, tasks] = fold(vtask.$(state.taskTree, 0), [0, []], state.taskTree)
+  return h('div#container', [
     h('div.top-bar', [
       h('div.app-name', 'Timesheet'),
       h('i.menu-btn.fa.fa-ellipsis-v'),
     ]),
     h('div.top-bar-filler'),
     h('canvas#canvas'),
-    h('div#task-container', [
-      h('ul#tasks', map(vtask.$(state.taskTree, 0), state.taskTree)),
-      h('div.btn', {style: {margin: '.2em'}, on: {click: [beginCreateTask, _, state.taskTree]}}, 'Create task'),
+    h('div#task-container', {style: {height: nTasks*52+'px'}}, [
+      h('ul#tasks', tasks),
       state.newTask ? modal(createTaskModal(state.newTask), dropNewTask) : '',
       state.activeSession ? modal(sessionModal(state.activeSession), noop) : '',
+    ]),
+    h('div.after-tasks', {
+      style: {transform: `translateY(${nTasks*52}px)`,
+              transitionDuration: foldDiff*medDur/2 + 'ms',
+              transitionDelay: (foldDir === FOLD_IN ? medDur/2 : 0) + 'ms'},
+    }, [
+      h('div.btn', {
+        style: {margin: '.2em'},
+        on: {click: [beginCreateTask, _, state.taskTree]},
+      }, 'Create task'),
     ])
   ])
+}
 
 const domRenderer = () => {
   var oldVtree = document.getElementById('container')
@@ -591,7 +623,6 @@ const domRenderer = () => {
     state.taskTree = undefined
     state.newTask = undefined
     state.activeSession = undefined
-    console.log(state)
     localStorage.setItem('state', JSON.stringify(state))
     state.taskTree = taskTree
     state.newTask = newTask
