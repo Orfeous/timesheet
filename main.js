@@ -138,6 +138,7 @@ const db = syncedDB.open({
   version: 1,
   stores: stores,
 })
+const loadTaskByParentKey = (key) => db.tasks.byParent.get(key)
 const putTask = (t) => db.tasks.put(t)
 
 // State
@@ -147,27 +148,20 @@ const defaultState = {
   timeView: {startTime: now - halfWeek, endTime: now + halfWeek},
 }
 
-const isSessionDone = (s) => s.endTime !== 0 && now() > s.endTime
+const isSessionDone = (s) => s.endTime !== 0 && s.endTime < now()
 
 const loadSessions = (node) =>
-  db.sessions.byTask.get(node.task.key).then((s) => node.sessions = log('ses', filter(isSessionDone, s)))
-
+  db.sessions.byTask.get(node.task.key).then((s) => node.sessions = filter(isSessionDone, s))
 const loadSessionsEndingAfterNow = () => db.sessions.byEndTime.inRange({gte: now()})
 const loadSessionsEndingAtZero = () => db.sessions.byEndTime.get(0)
-const loadActiveSessions = () =>
-  loadSessionsEndingAfterNow().then((l) => notEmpty(l) ? l : loadSessionsEndingAtZero())
-
-const loadChildrenIfOpen = (node) => {
-  if (node.task.open === true) {
-    return db.tasks.byParent.get(node.task.key).then((children) => {
-      const childrenNodes = map((t) => taskNode(node, t), children)
-      node.children = childrenNodes
-      return loadSessions(node)
-    }).then((sessions) => Promise.all(map(loadChildrenIfOpen, node.children)))
-  } else {
-    return loadSessions(node)
-  }
-}
+const loadActiveSessions = () => loadSessionsEndingAfterNow().then((l) => notEmpty(l) ? l : loadSessionsEndingAtZero())
+const addChildTasks = (node, children) => (node.children = map((t) => taskNode(node, t), children))
+const loadChildren = (node) => Promise.all(map(loadTaskIfOpen, node.children))
+const loadTaskIfOpen = (node) =>
+  node.task.open === true ? loadTaskByParentKey(node.task.key).then(addChildTasks.$(node))
+                                                              .then(loadSessions.$(node))
+                                                              .then(loadChildren.$(node))
+                          : loadSessions(node)
 
 const initializeState = () => {
   const restoredState = localStorage.getItem('state')
@@ -175,7 +169,7 @@ const initializeState = () => {
   return db.tasks.atRoot.getAll().then((rootTasks) => {
     const rootNodes = map((t) => taskNode(undefined, t), rootTasks)
     state.taskTree = rootNodes
-    return Promise.all(map(loadChildrenIfOpen, rootNodes))
+    return Promise.all(map(loadTaskIfOpen, rootNodes))
   }).then(loadActiveSessions).then((s) => {
     if (notEmpty(s)) {
       state.activeSession = head(s)
@@ -191,26 +185,38 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
   for (let s of sessions) {
     if (inInterval(s.startTime, startTime, endTime) ||
         inInterval(s.endTime, startTime, endTime)) {
-      ctx.fillRect((s.startTime - startTime) * msSize, offset * 52 + 24,
-                   (s.endTime - s.startTime) * msSize, 52)
+      ctx.fillRect((s.startTime - startTime) * msSize, offset * 52 + 24 + 2,
+                   (s.endTime - s.startTime) * msSize, 52 - 3)
     }
   }
   return task.open === true ? fold(renderSessions.$(ctx, msSize, startTime, endTime), offset + 1, children)
                             : offset + 1
 }
 
-let msSize, daysVisible, daySize, startTime, offset
+let msSize, daysVisible, daySize, startTime, offset, pixelSize
 const calcGrid = () => {
-  msSize = containerRect.width / (state.timeView.endTime - state.timeView.startTime)
-  daysVisible = Math.ceil((state.timeView.endTime - state.timeView.startTime) / day) + 1
-  daySize = containerRect.width / ((state.timeView.endTime - state.timeView.startTime) / day)
-  startTime = state.timeView.startTime - (state.timeView.startTime % day)
-  offset = (state.timeView.startTime % day) / day * daySize
+  const tW = state.timeView
+  const timeDur = tW.endTime - tW.startTime
+  msSize = containerRect.width / timeDur
+  daysVisible = Math.ceil(timeDur / day) + 1
+  daySize = containerRect.width / (timeDur / day)
+  startTime = tW.startTime - (tW.startTime % day)
+  offset = (tW.startTime % day) / day * daySize
+  pixelSize = timeDur / containerRect.width
 }
 
-const render = (canvas, ctx) => {
+let lastRenderTime = now()
+const render = (canvas, ctx, t) => {
   const w = canvas.width
   const h = canvas.height
+  const dt = t - lastRenderTime
+  if (velocity !== 0) {
+    state.timeView.startTime -= velocity * pixelSize * dt
+    state.timeView.endTime -= velocity * pixelSize * dt
+    calcGrid()
+    velocity = velocity > 0 ? Math.max(0, velocity - (dt * 0.004))
+                            : Math.min(0, velocity + (dt * 0.004))
+  }
   if (containerRect.width !== w || containerRect.height !== h) {
     resizeCanvas(canvas, containerRect)
   } else {
@@ -263,8 +269,9 @@ listen(document, 'DOMContentLoaded', () => {
     listen(content, 'touchcancel', touchCancel)
     listen(content, 'touchmove', touchMove)
 
-    requestAnimationFrame(function frame() {
-      render(canvas, ctx)
+    requestAnimationFrame(function frame(t) {
+      render(canvas, ctx, t)
+      lastRenderTime = t
       requestAnimationFrame(frame)
     })
   })
@@ -278,27 +285,21 @@ const updateContainerRect = () => {
 }
 
 // Handle gestures
-var touchesDown = []
+let touchesDown = []
+let startTimeHistory = []
+let velocity = 0
 
 const findTouch = (id, touches) => find((t) => t.identifier === id, touches)
 
 const touchStart = (ev) => {
   scrollDirection = SCROLL_UNDETERMINED
+  if (velocity !== 0) { ev.preventDefault(); velocity = 0; }
   const touch = ev.changedTouches[0];
   touchesDown = concat(touchesDown, map((t) => ({id: t.identifier, x: t.pageX, y: t.pageY}), ev.changedTouches))
 }
 
-const touchEnd = (ev) => {
-  const ids = map(prop.$('identifier'), ev.changedTouches)
-  touchesDown = filter((t) => !contains(t.id, ids), touchesDown)
-}
-
-const touchCancel = (ev) => {
-  const ids = map(prop.$('identifier'), ev.changedTouches)
-  touchesDown = filter((t) => !contains(t.id, ids), touchesDown)
-}
-
 const touchMove = (ev) => {
+  const tW = state.timeView
   if (touchesDown.length === 1) {
     const t = touchesDown[0]
     const moved = find((moved) => moved.identifier === t.id, ev.changedTouches)
@@ -315,9 +316,9 @@ const touchMove = (ev) => {
       }
     } else if (scrollDirection === SCROLL_HORIZONTAL) {
       ev.preventDefault()
-      const pixelSize = (state.timeView.endTime - state.timeView.startTime) / containerRect.width
-      state.timeView.startTime -= (x - t.x) * pixelSize
-      state.timeView.endTime -= (x - t.x) * pixelSize
+      tW.startTime -= (x - t.x) * pixelSize
+      tW.endTime -= (x - t.x) * pixelSize
+      startTimeHistory.push([now(), x])
       t.x = x
       t.y = y
     }
@@ -327,18 +328,39 @@ const touchMove = (ev) => {
     const m2 = findTouch(t2.id, ev.touches)
     const nRelX1 = m1.screenX / containerRect.width
     const nRelX2 = m2.screenX / containerRect.width
-    const timeViewDur = state.timeView.endTime - state.timeView.startTime
-    const time1 = state.timeView.startTime + (t1.x / containerRect.width) * timeViewDur
-    const time2 = state.timeView.startTime + (t2.x / containerRect.width) * timeViewDur
+    const timeViewDur = tW.endTime - tW.startTime
+    const time1 = tW.startTime + (t1.x / containerRect.width) * timeViewDur
+    const time2 = tW.startTime + (t2.x / containerRect.width) * timeViewDur
     const durPerWidth = Math.abs(time1 - time2) / Math.abs(nRelX1 - nRelX2)
-    state.timeView.startTime = time1 - durPerWidth * nRelX1
-    state.timeView.endTime = time1 + durPerWidth * (1 - nRelX1)
+    tW.startTime = time1 - durPerWidth * nRelX1
+    tW.endTime = time1 + durPerWidth * (1 - nRelX1)
     t1.x = m1.screenX
     t1.y = m1.screenY
     t2.x = m2.screenX
     t2.y = m2.screenY
   }
   calcGrid()
+}
+
+const touchEnd = (ev) => {
+  const ids = map(prop.$('identifier'), ev.changedTouches)
+  if (touchesDown.length === 1 && startTimeHistory.length > 0) {
+    let curTime = now()
+    let i
+    for (i = startTimeHistory.length - 1; 1 <= i; --i) {
+      if (startTimeHistory[i][0] < (curTime - 50)) break;
+    }
+    const [prevTime, prevX] = startTimeHistory[i]
+    velocity = (touchesDown[0].x - prevX) / (curTime - prevTime)
+    log('vel', velocity)
+  }
+  startTimeHistory = []
+  touchesDown = filter((t) => !contains(t.id, ids), touchesDown)
+}
+
+const touchCancel = (ev) => {
+  const ids = map(prop.$('identifier'), ev.changedTouches)
+  touchesDown = filter((t) => !contains(t.id, ids), touchesDown)
 }
 
 const notify = () => {
@@ -363,7 +385,7 @@ const toggleFold = (pos, nPos, node) => {
     domRender()
   }
   task.open = !task.open
-  putTask(task).then(() => loadChildrenIfOpen(node)).then(() => {
+  putTask(task).then(() => loadTaskIfOpen(node)).then(() => {
     if (task.open) foldDiff = countChildren(node)
     domRender()
     updateContainerRect()
