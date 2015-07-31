@@ -34,10 +34,10 @@ const SCROLL_UNDETERMINED = 0
 const SCROLL_VERTICAL = 1
 const SCROLL_HORIZONTAL = 2
 
-var scrollDirection = SCROLL_UNDETERMINED
-var domRender
-var canvas, ctx
-var containerRect = {width: 0, height: 0}
+let scrollDirection = SCROLL_UNDETERMINED
+let domRender
+let canvas, ctx
+let containerRect = {width: 0, height: 0}
 
 // Helper functions
 const _ = undefined // jshint ignore:line
@@ -162,31 +162,12 @@ const loadActiveSessions = () => loadSessionsEndingAfterNow().then((l) => notEmp
 const addChildTasks = (node, children) => (node.children = map((t) => taskNode(node, t), children))
 const loadChildren = (node) => Promise.all(map(loadTaskIfOpen, node.children))
 const loadTaskIfOpen = (node) =>
-  //node.task.open === true ? loadTaskByParentKey(node.task.key).then((ch) => addChildTasks(node, ch))
-                                                              //.then(() => loadSessions(node))
-                                                              //.then(() => loadChildren(node))
   node.task.open === true ? loadTaskByParentKey(node.task.key).then(addChildTasks.$(node))
                                                               .then(loadSessions.$(node))
                                                               .then(loadChildren.$(node))
                           : loadSessions(node)
 
-
-/*
-const loadTaskIfOpen = (node) => {
-  if (node.task.open === true) {
-    return db.tasks.byParent.get(node.task.key).then((children) => {
-      const childrenNodes = map((t) => taskNode(node, t), children)
-      node.children = childrenNodes
-      return loadSessions(node)
-    }).then((sessions) => Promise.all(map(loadTaskIfOpen, node.children)))
-  } else {
-    return loadSessions(node)
-  }
-}
-*/
-
 const initializeState = () => {
-  //const restoredState = localStorage.getItem('state')
   const restoredState = null
   const state = restoredState !== null ? JSON.parse(restoredState) : defaultState
   return db.tasks.atRoot.getAll().then((rootTasks) => {
@@ -209,8 +190,8 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
     let s = sessions[i]
     if (inInterval(s.startTime, startTime, endTime) ||
         inInterval(s.endTime, startTime, endTime)) {
-      ctx.fillRect((s.startTime - startTime) * msSize, offset * 52 + 24 + 2,
-                   (s.endTime - s.startTime) * msSize, 52 - 3)
+      ctx.fillRect((s.startTime - startTime) * msSize, offset * taskLineH + 24 + 2,
+                   (s.endTime - s.startTime) * msSize, taskLineH - 3)
     }
   }
   return task.open === true ? fold(renderSessions.$(ctx, msSize, startTime, endTime), offset + 1, children)
@@ -232,11 +213,11 @@ const calcGrid = () => {
 
 let lastRenderTime = now()
 const gridBarH = 24
-const render = (canvas, ctx, time) => {
+const render = (time) => {
   const w = canvas.width
   const h = canvas.height
-  const dt = time- lastRenderTime
   if (velocity !== 0) {
+    const dt = time - lastRenderTime
     state.timeView.startTime -= velocity * pixelSize * dt
     calcGrid()
     velocity = velocity > 0 ? Math.max(0, velocity - (dt * 0.004))
@@ -268,6 +249,10 @@ const render = (canvas, ctx, time) => {
   }
   ctx.fillStyle = base2
   fold(renderSessions.$(ctx, msSize, state.timeView.startTime, endTime), 0, state.taskTree)
+  lastRenderTime = time
+  if (touchesDown.length !== 0 || velocity !== 0) {
+    requestAnimationFrame(render)
+  }
 }
 
 const resizeCanvas = (canvas, {width: w, height: h}) => {
@@ -289,23 +274,19 @@ listen(document, 'DOMContentLoaded', () => {
     ctx = canvas.getContext('2d')
 
     const content = document.getElementById('task-container')
-    listen(content, 'resize', updateContainerRect)
+    listen(window, 'resize', updateContainerRect)
     listen(content, 'touchstart', touchStart)
     listen(content, 'touchend', touchEnd)
     listen(content, 'touchcancel', touchCancel)
     listen(content, 'touchmove', touchMove)
-
-    requestAnimationFrame(function frame(t) {
-      render(canvas, ctx, t)
-      lastRenderTime = t
-      requestAnimationFrame(frame)
-    })
+    requestAnimationFrame(render)
   })
 })
 
 const updateContainerRect = () => {
   containerRect.width = document.body.clientWidth
   calcGrid()
+  if (canvas !== undefined) requestAnimationFrame(render)
 }
 
 // Handle gestures
@@ -320,6 +301,7 @@ const touchStart = (ev) => {
   if (velocity !== 0) { ev.preventDefault(); velocity = 0; }
   const touch = ev.changedTouches[0];
   touchesDown = concat(touchesDown, map((t) => ({id: t.identifier, x: t.pageX, y: t.pageY}), ev.changedTouches))
+  if (touchesDown.length === 2) requestAnimationFrame(render)
 }
 
 const touchMove = (ev) => {
@@ -334,6 +316,7 @@ const touchMove = (ev) => {
         scrollDirection = SCROLL_HORIZONTAL
         t.x = x
         t.y = y
+        requestAnimationFrame(render)
       } else if (Math.abs(y - t.y) > 30) {
         scrollDirection = SCROLL_VERTICAL
       }
@@ -403,16 +386,17 @@ const toggleFold = (pos, nPos, node) => {
     domRender()
   }
   task.open = !task.open
-  putTask(task).then(() => {
-    return loadTaskIfOpen(node)}).then(() => {
+  loadTaskIfOpen(node).then(() => {
     if (task.open) foldDiff = countChildren(node)
     domRender()
+    setTimeout(() => putTask(task), foldDiff * medDur)
   })
 }
 
 const toggleDone = (task) => {
+  const start = performance.now()
   task.done = !task.done
-  putTask(task)
+  setTimeout(() => putTask(task), medDur)
   domRender()
 }
 
@@ -511,6 +495,7 @@ const deleteTask = (node, parentChildren) => {
 
 // View
 
+const taskLineH = 51
 const startSessionModal = (node) =>
   h('div.begin-session', [
     h('div.btn.btn-block', {on: {click: [createSession, node, _]}}, 'Stop timer manually'),
@@ -596,10 +581,10 @@ const vtask = (parentChildren, level, [pos, nodes], node) => {
     class: {folded: !task.open},
   }, [
     h('div.task-line', {
-      style: {opacity: 0, transform: `translateY(${pos*52}px)`,
+      style: {opacity: 0, transform: `translateY(${pos*taskLineH}px)`,
               transitionDuration: `${medDur}ms, ${foldDiff*medDur/2}ms`,
               transitionDelay: `${(pos-foldedAt)*medDur/2}ms, ${foldDir===FOLD_IN?medDur/2:0}ms`,
-              delayed: {opacity: 1, transform: `translateY(${pos*52}px)`},
+              delayed: {opacity: 1, transform: `translateY(${pos*taskLineH}px)`},
               destroy: {opacity: 0, transitionDelay: `${(foldDiff-(pos-foldedAt))*medDur/2}ms, 0ms`}},
     },
     map((l) => h('div.indent-indicator', {
@@ -623,7 +608,11 @@ const vtask = (parentChildren, level, [pos, nodes], node) => {
 
 const vtree = (state) => {
   const [nTasks, tasks] = fold(vtask.$(state.taskTree, 0), [0, []], state.taskTree)
-  containerRect.height = nTasks * 52 + gridBarH
+  const newHeight = nTasks * taskLineH + gridBarH
+  if (containerRect.height !== newHeight) {
+    containerRect.height = newHeight
+    requestAnimationFrame(render)
+  }
   return h('div#container', [
     h('div.top-bar', [
       h('div.app-name', 'Timesheet'),
@@ -631,13 +620,13 @@ const vtree = (state) => {
     ]),
     h('div.top-bar-filler'),
     h('canvas#canvas'),
-    h('div#task-container', {style: {height: nTasks*52+'px'}}, [
+    h('div#task-container', {style: {height: nTasks*taskLineH+'px'}}, [
       h('ul#tasks', tasks),
       state.newTask ? modal(createTaskModal(state.newTask), dropNewTask) : '',
       state.activeSession ? modal(sessionModal(state.activeSession), noop) : '',
     ]),
     h('div.after-tasks', {
-      style: {transform: `translateY(${nTasks*52}px)`,
+      style: {transform: `translateY(${nTasks*taskLineH}px)`,
               transitionDuration: foldDiff*medDur/2 + 'ms',
               transitionDelay: (foldDir === FOLD_IN ? medDur/2 : 0) + 'ms'},
     }, [
@@ -656,16 +645,6 @@ const domRenderer = () => {
       state.timeView = {startTime: now() - halfWeek, duration: week}
     }
     oldVtree = patch(oldVtree, vtree(state))
-    const taskTree = state.taskTree
-    const newTask = state.newTask
-    const activeSession = state.activeSession
-    state.taskTree = undefined
-    state.newTask = undefined
-    state.activeSession = undefined
-    localStorage.setItem('state', JSON.stringify(state))
-    state.taskTree = taskTree
-    state.newTask = newTask
-    state.activeSession = activeSession
   }
 }
 
