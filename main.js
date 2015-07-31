@@ -87,7 +87,11 @@ const setProp = (name, val, obj) => obj[name] = val
 const contains = (elm, list) => list.indexOf(elm) !== -1
 const inInterval = (n, l, h) => (l <= n && n <= h)
 Function.prototype.$ = function() {
-  var fn = this, args = arguments
+  var fn = this
+  var args = new Array(arguments.length);
+  for (var i = 0, l = arguments.length; i < l; i++) {
+    args[i] = arguments[i];
+  }
   return function() {
     var res = [], i;
     for (i = 0; i < args.length; ++i) res[i] = args[i]
@@ -145,7 +149,7 @@ const putTask = (t) => db.tasks.put(t)
 let state
 const defaultState = {
   newTask: _,
-  timeView: {startTime: now - halfWeek, endTime: now + halfWeek},
+  timeView: {startTime: now() - halfWeek, duration: week}
 }
 
 const isSessionDone = (s) => s.endTime !== 0 && s.endTime < now()
@@ -158,13 +162,32 @@ const loadActiveSessions = () => loadSessionsEndingAfterNow().then((l) => notEmp
 const addChildTasks = (node, children) => (node.children = map((t) => taskNode(node, t), children))
 const loadChildren = (node) => Promise.all(map(loadTaskIfOpen, node.children))
 const loadTaskIfOpen = (node) =>
+  //node.task.open === true ? loadTaskByParentKey(node.task.key).then((ch) => addChildTasks(node, ch))
+                                                              //.then(() => loadSessions(node))
+                                                              //.then(() => loadChildren(node))
   node.task.open === true ? loadTaskByParentKey(node.task.key).then(addChildTasks.$(node))
                                                               .then(loadSessions.$(node))
                                                               .then(loadChildren.$(node))
                           : loadSessions(node)
 
+
+/*
+const loadTaskIfOpen = (node) => {
+  if (node.task.open === true) {
+    return db.tasks.byParent.get(node.task.key).then((children) => {
+      const childrenNodes = map((t) => taskNode(node, t), children)
+      node.children = childrenNodes
+      return loadSessions(node)
+    }).then((sessions) => Promise.all(map(loadTaskIfOpen, node.children)))
+  } else {
+    return loadSessions(node)
+  }
+}
+*/
+
 const initializeState = () => {
-  const restoredState = localStorage.getItem('state')
+  //const restoredState = localStorage.getItem('state')
+  const restoredState = null
   const state = restoredState !== null ? JSON.parse(restoredState) : defaultState
   return db.tasks.atRoot.getAll().then((rootTasks) => {
     const rootNodes = map((t) => taskNode(undefined, t), rootTasks)
@@ -182,7 +205,8 @@ const initializeState = () => {
 
 const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
   const {task, sessions, children} = node
-  for (let s of sessions) {
+  for (let i = 0; i < sessions.length; ++i) {
+    let s = sessions[i]
     if (inInterval(s.startTime, startTime, endTime) ||
         inInterval(s.endTime, startTime, endTime)) {
       ctx.fillRect((s.startTime - startTime) * msSize, offset * 52 + 24 + 2,
@@ -193,26 +217,27 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
                             : offset + 1
 }
 
-let msSize, daysVisible, daySize, startTime, offset, pixelSize
+let msSize, daysVisible, daySize, startTime, endTime, offset, pixelSize
 const calcGrid = () => {
   const tW = state.timeView
-  const timeDur = tW.endTime - tW.startTime
-  msSize = containerRect.width / timeDur
-  daysVisible = Math.ceil(timeDur / day) + 1
-  daySize = containerRect.width / (timeDur / day)
-  startTime = tW.startTime - (tW.startTime % day)
-  offset = (tW.startTime % day) / day * daySize
-  pixelSize = timeDur / containerRect.width
+  const {startTime: start, duration} = tW
+  endTime = start + duration
+  msSize = containerRect.width / duration
+  daysVisible = Math.ceil(duration / day) + 1
+  daySize = containerRect.width / (duration / day)
+  startTime = start - (start % day)
+  offset = (start % day) / day * daySize
+  pixelSize = duration / containerRect.width
 }
 
 let lastRenderTime = now()
-const render = (canvas, ctx, t) => {
+const gridBarH = 24
+const render = (canvas, ctx, time) => {
   const w = canvas.width
   const h = canvas.height
-  const dt = t - lastRenderTime
+  const dt = time- lastRenderTime
   if (velocity !== 0) {
     state.timeView.startTime -= velocity * pixelSize * dt
-    state.timeView.endTime -= velocity * pixelSize * dt
     calcGrid()
     velocity = velocity > 0 ? Math.max(0, velocity - (dt * 0.004))
                             : Math.min(0, velocity + (dt * 0.004))
@@ -223,16 +248,17 @@ const render = (canvas, ctx, t) => {
     ctx.clearRect(0, 0, w, h)
   }
   ctx.fillStyle = base2
-  ctx.fillRect(0, 0, w, 24)
+  ctx.fillRect(0, 0, w, gridBarH)
   ctx.fillStyle = base1
-  const showHours = (state.timeView.endTime - state.timeView.startTime) < day
+  const showHours = (endTime - state.timeView.startTime) < day
   const lineTime = showHours ? hour : day
   const lineDist = showHours ? daySize / 24 : daySize
-  const endTime = state.timeView.endTime
+  ctx.fillStyle = base1
   for (let i = 0; startTime + i * lineTime < endTime; ++i) {
-    ctx.fillStyle = base1
     ctx.fillRect(-offset + i * lineDist, 0, 1, 24)
-    ctx.fillStyle = base2
+  }
+  ctx.fillStyle = base2
+  for (let i = 0; startTime + i * lineTime < endTime; ++i) {
     ctx.fillRect(-offset + i * lineDist, 24, 1, h-24)
   }
   ctx.fillStyle = base00
@@ -241,7 +267,7 @@ const render = (canvas, ctx, t) => {
     ctx.fillText(getDate(t) + ' / ' + getMonth(t), -offset + i * daySize + 5, 15)
   }
   ctx.fillStyle = base2
-  fold(renderSessions.$(ctx, msSize, state.timeView.startTime, state.timeView.endTime), 0, state.taskTree)
+  fold(renderSessions.$(ctx, msSize, state.timeView.startTime, endTime), 0, state.taskTree)
 }
 
 const resizeCanvas = (canvas, {width: w, height: h}) => {
@@ -257,7 +283,7 @@ listen(document, 'DOMContentLoaded', () => {
     state = initState
     domRender = domRenderer()
     domRender()
-    setTimeout(() => updateContainerRect(canvas, ctx), 200)
+    updateContainerRect()
 
     canvas = document.getElementById('canvas')
     ctx = canvas.getContext('2d')
@@ -278,9 +304,7 @@ listen(document, 'DOMContentLoaded', () => {
 })
 
 const updateContainerRect = () => {
-  const rect = document.getElementById('task-container').getBoundingClientRect()
-  containerRect.width = rect.width | 0
-  containerRect.height = rect.height | 0
+  containerRect.width = document.body.clientWidth
   calcGrid()
 }
 
@@ -301,13 +325,12 @@ const touchStart = (ev) => {
 const touchMove = (ev) => {
   const tW = state.timeView
   if (touchesDown.length === 1) {
+    if (scrollDirection === SCROLL_VERTICAL) return
+    ev.preventDefault()
     const t = touchesDown[0]
-    const moved = find((moved) => moved.identifier === t.id, ev.changedTouches)
-    if (moved === _) return
-    const {pageX: x, pageY: y} = moved
+    const {pageX: x, pageY: y} = find((moved) => moved.identifier === t.id, ev.changedTouches)
     if (scrollDirection === SCROLL_UNDETERMINED) {
       if (Math.abs(x - t.x) > 30) {
-        ev.preventDefault()
         scrollDirection = SCROLL_HORIZONTAL
         t.x = x
         t.y = y
@@ -315,44 +338,38 @@ const touchMove = (ev) => {
         scrollDirection = SCROLL_VERTICAL
       }
     } else if (scrollDirection === SCROLL_HORIZONTAL) {
-      ev.preventDefault()
       tW.startTime -= (x - t.x) * pixelSize
-      tW.endTime -= (x - t.x) * pixelSize
       startTimeHistory.push([now(), x])
       t.x = x
       t.y = y
+      calcGrid()
     }
   } else {
+    ev.preventDefault()
     const t1 = touchesDown[0], t2 = touchesDown[1]
     const m1 = findTouch(t1.id, ev.touches)
     const m2 = findTouch(t2.id, ev.touches)
     const nRelX1 = m1.screenX / containerRect.width
     const nRelX2 = m2.screenX / containerRect.width
-    const timeViewDur = tW.endTime - tW.startTime
-    const time1 = tW.startTime + (t1.x / containerRect.width) * timeViewDur
-    const time2 = tW.startTime + (t2.x / containerRect.width) * timeViewDur
-    const durPerWidth = Math.abs(time1 - time2) / Math.abs(nRelX1 - nRelX2)
-    tW.startTime = time1 - durPerWidth * nRelX1
-    tW.endTime = time1 + durPerWidth * (1 - nRelX1)
-    t1.x = m1.screenX
-    t1.y = m1.screenY
-    t2.x = m2.screenX
-    t2.y = m2.screenY
+    const time1 = tW.startTime + (t1.x / containerRect.width) * tW.duration
+    const time2 = tW.startTime + (t2.x / containerRect.width) * tW.duration
+    tW.duration = Math.abs(time1 - time2) / Math.abs(nRelX1 - nRelX2)
+    tW.startTime = time1 - (tW.duration * nRelX1)
+    t1.x = m1.screenX; t1.y = m1.screenY
+    t2.x = m2.screenX; t2.y = m2.screenY
+    calcGrid()
   }
-  calcGrid()
 }
 
 const touchEnd = (ev) => {
   const ids = map(prop.$('identifier'), ev.changedTouches)
   if (touchesDown.length === 1 && startTimeHistory.length > 0) {
-    let curTime = now()
-    let i
+    let curTime = now(), i
     for (i = startTimeHistory.length - 1; 1 <= i; --i) {
       if (startTimeHistory[i][0] < (curTime - 50)) break;
     }
     const [prevTime, prevX] = startTimeHistory[i]
     velocity = (touchesDown[0].x - prevX) / (curTime - prevTime)
-    log('vel', velocity)
   }
   startTimeHistory = []
   touchesDown = filter((t) => !contains(t.id, ids), touchesDown)
@@ -377,6 +394,7 @@ let foldDiff = 0
 let foldDir = FOLD_OUT
 
 const toggleFold = (pos, nPos, node) => {
+  const start = performance.now()
   const task = node.task
   foldDir = task.open ? FOLD_IN : FOLD_OUT
   foldedAt = pos
@@ -385,10 +403,10 @@ const toggleFold = (pos, nPos, node) => {
     domRender()
   }
   task.open = !task.open
-  putTask(task).then(() => loadTaskIfOpen(node)).then(() => {
+  putTask(task).then(() => {
+    return loadTaskIfOpen(node)}).then(() => {
     if (task.open) foldDiff = countChildren(node)
     domRender()
-    updateContainerRect()
   })
 }
 
@@ -481,7 +499,6 @@ const createNewTask = ({parentNode, target, title}, ev) => {
   state.newTask = _
   putTask(createdTask)
   domRender()
-  updateContainerRect()
 }
 
 const deleteTask = (node, parentChildren) => {
@@ -489,7 +506,6 @@ const deleteTask = (node, parentChildren) => {
   domRender()
   pull(node, parentChildren)
   domRender()
-  updateContainerRect()
   db.tasks.delete(node.task.key)
 }
 
@@ -607,6 +623,7 @@ const vtask = (parentChildren, level, [pos, nodes], node) => {
 
 const vtree = (state) => {
   const [nTasks, tasks] = fold(vtask.$(state.taskTree, 0), [0, []], state.taskTree)
+  containerRect.height = nTasks * 52 + gridBarH
   return h('div#container', [
     h('div.top-bar', [
       h('div.app-name', 'Timesheet'),
@@ -636,7 +653,7 @@ const domRenderer = () => {
   var oldVtree = document.getElementById('container')
   return () => {
     if (state.timeView === _) {
-      state.timeView = {startTime: now() - halfWeek, endTime: now() + halfWeek}
+      state.timeView = {startTime: now() - halfWeek, duration: week}
     }
     oldVtree = patch(oldVtree, vtree(state))
     const taskTree = state.taskTree
