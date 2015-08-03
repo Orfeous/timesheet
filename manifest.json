@@ -1,0 +1,13 @@
+{
+  "name": "Timesheet",
+  "description": "Manage your tasks and your time",
+  "version": "0.1",
+  "manifest_version": 2,
+  "app": {
+    "background": {
+      "scripts": ["background.js"]
+    }
+  },
+  "permissions": ["alarms", "notifications"],
+  "icons": {"16": "calculator-16.png", "128": "calculator-128.png"}
+}
