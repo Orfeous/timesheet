@@ -39,6 +39,12 @@ let domRender
 let canvas, ctx
 let containerRect = {width: 0, height: 0}
 
+const hasChromeAlarm = 'chrome' in window && 'alarms' in chrome
+const hasNotifications = 'Notification' in window
+console.log(hasChromeAlarm ? 'is Chrome' : 'Not chrome app')
+
+if (hasNotifications) Notification.requestPermission()
+
 // Helper functions
 const _ = undefined // jshint ignore:line
 const noop = () => {}
@@ -363,8 +369,17 @@ const touchCancel = (ev) => {
   touchesDown = filter((t) => !contains(t.id, ids), touchesDown)
 }
 
-const notify = () => {
-  navigator.vibrate([100, 100, 100, 300, 300])
+const notify = (msDelay) => {
+  if (hasChromeAlarm) {
+    chrome.alarms.create('countdown', {when: now() + msDelay})
+  } else {
+    setTimeout(() => {
+      navigator.vibrate([100, 100, 100, 300, 300])
+      if (hasNotifications) {
+        new Notification('Task done');
+      }
+    }, msDelay)
+  }
 }
 
 const taskNode = (parent, task) => ({task, parent, children: [], sessions: []})
@@ -376,13 +391,12 @@ let foldedAt = 0
 let foldDiff = 0
 let foldDir = FOLD_OUT
 
-const toggleFold = (pos, nPos, node) => {
-  const start = performance.now()
+const toggleFold = (pos, nrOfSubtasks, node) => {
   const task = node.task
   foldDir = task.open ? FOLD_IN : FOLD_OUT
   foldedAt = pos
   if (foldDir === FOLD_IN) {
-    foldDiff = nPos - pos - 1
+    foldDiff = nrOfSubtasks
     domRender()
   }
   task.open = !task.open
@@ -394,13 +408,13 @@ const toggleFold = (pos, nPos, node) => {
 }
 
 const toggleDone = (task) => {
-  const start = performance.now()
   task.done = !task.done
   setTimeout(() => putTask(task), medDur)
   domRender()
 }
 
 const toggleTimerModal = (task, ev) => {
+  task.showOptionsMenu = false
   task.timerModalOpen = !task.timerModalOpen
   domRender()
 }
@@ -502,29 +516,29 @@ const startSessionModal = (node) =>
     h('h2', 'or after'),
     h('table', [
       h('tr', [
-        h('td.btn', {on: {click: notify}}, '0s'),
-        h('td.btn', {on: {click: [setTimeout, notify, 5000]}}, '5s'),
-        h('td.btn', '10m'),
+        h('td.td-btn', {on: {click: [notify, second]}}, '1s'),
+        h('td.td-btn', {on: {click: [notify, 5*second]}}, '5s'),
+        h('td.td-btn', {on: {click: [notify, minute]}}, '1m'),
       ]),
       h('tr', [
-        h('td.btn', '15m'),
-        h('td.btn', '20m'),
-        h('td.btn', '25m'),
+        h('td.td-btn', '15m'),
+        h('td.td-btn', '20m'),
+        h('td.td-btn', '25m'),
       ]),
       h('tr', [
-        h('td.btn', '30m'),
-        h('td.btn', '35m'),
-        h('td.btn', '40m'),
+        h('td.td-btn', '30m'),
+        h('td.td-btn', '35m'),
+        h('td.td-btn', '40m'),
       ]),
       h('tr', [
-        h('td.btn', '45m'),
-        h('td.btn', '50m'),
-        h('td.btn', '55m'),
+        h('td.td-btn', '45m'),
+        h('td.td-btn', '50m'),
+        h('td.td-btn', '55m'),
       ]),
       h('tr', [
-        h('td.btn', '1h'),
-        h('td.btn', '1h 15m'),
-        h('td.btn', '1h 30m'),
+        h('td.td-btn', '1h'),
+        h('td.td-btn', '1h 15m'),
+        h('td.td-btn', '1h 30m'),
       ]),
     ]),
   ])
@@ -551,8 +565,14 @@ const createTaskModal = (newTask) =>
     ])
   ])
 
-const taskOptionsModal = (parentChildren, node) =>
+const taskOptionsModal = (parentChildren, node, pos, nrOfSubtasks) =>
   h('div', {style: {}}, [
+    h('div.btn.btn-block', {
+      style: {marginBottom: '.5em'}, on: {click: [toggleFold, pos, nrOfSubtasks, node]}
+    }, [h('i.fa.fa-chevron-right'), 'Unfold']),
+    h('div.btn.btn-block', {
+      style: {marginBottom: '.5em'}, on: {click: [toggleTimerModal, node.task, node.children]}
+    }, [h('i.fa.fa-clock-o'), 'Start timing']),
     h('div.btn.btn-block', {
       style: {marginBottom: '.5em'}, on: {click: [beginCreateTask, node, node.children]}
     }, [h('i.fa.fa-plus'), 'Create subtask']),
@@ -561,9 +581,9 @@ const taskOptionsModal = (parentChildren, node) =>
     }, [h('i.fa.fa-times'), 'Delete task']),
   ])
 
-const foldIndicator = (pos, nPos, node) =>
+const foldIndicator = (pos, nrOfSubtasks, node) =>
   h('div.fold-indicator', {
-    on: {click: [toggleFold, pos, nPos, node]},
+    on: {click: [toggleFold, pos, nrOfSubtasks, node]},
   }, [h('i.fa.fa-chevron-down', {
     style: {transform: `rotate(${node.task.open ? 0 : -90}deg)`},
   })])
@@ -577,21 +597,22 @@ const vtask = (parentChildren, level, [pos, nodes], node) => {
   const {task, children} = node
   const [newPos, subTasks] = task.open ? fold(vtask.$(children, level + 1), [pos + 1, []], children)
                                        : [pos + 1, []]
+  const nrOfSubtasks = newPos - pos - 1
   return [newPos, append(h('li.task', {
     class: {folded: !task.open},
   }, [
     h('div.task-line', {
       style: {opacity: 0, transform: `translateY(${pos*taskLineH}px)`,
-              transitionDuration: `${medDur}ms, ${foldDiff*medDur/2}ms`,
-              transitionDelay: `${(pos-foldedAt)*medDur/2}ms, ${foldDir===FOLD_IN?medDur/2:0}ms`,
+              transitionDuration: `${medDur}ms, ${medDur/2}ms`,
+              transitionDelay: `${(pos-foldedAt)*medDur/6+(medDur/2)}ms, ${foldDir===FOLD_IN ? foldDiff*medDur/6+medDur : 0}ms`,
               delayed: {opacity: 1, transform: `translateY(${pos*taskLineH}px)`},
-              destroy: {opacity: 0, transitionDelay: `${(foldDiff-(pos-foldedAt))*medDur/2}ms, 0ms`}},
+              destroy: {opacity: 0, transitionDelay: `${(foldDiff-(pos-foldedAt))*medDur/6}ms, 0ms`}},
     },
     map((l) => h('div.indent-indicator', {
       class: {'indent-faded': l !== level},
       style: {marginLeft: `${l}em`, backgroundColor: colorAtIndent(l)}
     }), fromTo(0, level)).concat([
-      task.hasSubtasks ? foldIndicator(pos, newPos, node) : doneCheckbox(task),
+      task.hasSubtasks ? foldIndicator(pos, nrOfSubtasks, node) : doneCheckbox(task),
       h('div.title-container', {
         on: {click: [toggleOptionsMenu, task]},
       }, [h('span.title', {
@@ -602,7 +623,7 @@ const vtask = (parentChildren, level, [pos, nodes], node) => {
     ])),
     notEmpty(subTasks) ? h('ul', {hook: {remove: delayRm((newPos-pos-1)*medDur)}}, subTasks) : '',
     task.timerModalOpen ? modal(startSessionModal(node), toggleTimerModal.$(task)) : '',
-    task.showOptionsMenu ? modal(taskOptionsModal(parentChildren, node), toggleOptionsMenu.$(task)) : '',
+    task.showOptionsMenu ? modal(taskOptionsModal(parentChildren, node, pos, nrOfSubtasks), toggleOptionsMenu.$(task)) : '',
   ]), nodes)]
 }
 
@@ -627,8 +648,8 @@ const vtree = (state) => {
     ]),
     h('div.after-tasks', {
       style: {transform: `translateY(${nTasks*taskLineH}px)`,
-              transitionDuration: foldDiff*medDur/2 + 'ms',
-              transitionDelay: (foldDir === FOLD_IN ? medDur/2 : 0) + 'ms'},
+              transitionDuration: medDur/2 + 'ms',
+              transitionDelay: (foldDir === FOLD_IN ? foldDiff*medDur/6+medDur : 0) + 'ms'},
     }, [
       h('div.btn', {
         style: {margin: '.2em'},

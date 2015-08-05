@@ -71,6 +71,11 @@ canvas {
   @include base-btn($cyan);
 }
 
+.td-btn {
+  @include base-btn($cyan);
+  display: table-cell;
+}
+
 .btn-danger {
   @include base-btn(#E23670);
 }
@@ -231,9 +236,11 @@ canvas {
   & > div:last-child {
     z-index: 110;
     background: $bg-color;
-    padding: $text-to-edge;
-    border-radius: 5px 5px 0 0;
+    margin: $text-to-edge;
+    padding: .5em;
+    border-radius: 0;
     width: 100%;
+    max-width: 16em;
   }
 }
 
