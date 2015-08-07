@@ -26,6 +26,8 @@ $short-dur: 60ms;
 $med-dur: 200ms;
 $long-dur: 350ms;
 
+$grid-bar-h: 16px;
+
 html, body {
   padding: 0;
   margin: 0;
@@ -37,8 +39,27 @@ body {
 
 canvas {
   display: block;
+}
+#canvas {
   position: absolute;
   z-index: -1;
+}
+
+.column {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: row;
+  & > *:not(:last-child) {
+    margin-right: .5em;
+  }
 }
 
 @mixin base-btn($color) {
@@ -48,13 +69,9 @@ canvas {
   padding: 0.6em;
   border: 1px solid $color;
   cursor: pointer;
-  transition: color $short-dur ease-in-out,
-              background-color $short-dur ease-in-out,
-              border-color $short-dur ease-in-out;
   &:active {
     box-shadow: inset 0 0 15px rgba(0, 0, 0, .1);
     background-color: darken($color, 5);
-    //border-color: lighten($color, 15);
   }
   & i:first-child {
     margin-right: .6em;
@@ -80,8 +97,18 @@ canvas {
   @include base-btn(#E23670);
 }
 
+.white-outline-btn {
+  @include base-btn(#000);
+  border: 2px solid #fff;
+  color: #fff;
+  &:active {
+    color: #000;
+    background: #fff;
+    box-shadow: none;
+  }
+}
+
 .block-input {
-  //line-height: 2.2em;
   padding: .5em;
   border: 1px solid $base2;
   display: block;
@@ -93,8 +120,8 @@ canvas {
   display: block;
 }
 
+// ****************************************
 // Top bar
-
 .top-bar {
   position: fixed;
   top: 0;
@@ -106,9 +133,13 @@ canvas {
   display: flex;
   justify-content: center;
   align-items: center;
-  //box-shadow: 0 0 2px 0px black;
 }
-
+#grid-bar {
+  z-index: 10;
+  position: fixed;
+  top: 52px;
+  width: 100%;
+}
 .app-name {
   flex-grow: 1;
   padding: .6em 0 .6em 16px;
@@ -119,12 +150,17 @@ canvas {
 }
 
 .top-bar-filler {
-  height: 53px;
+  height: 51+$grid-bar-h;
 }
 
 .title-container {
-  padding: 1em 0.0em;
+  padding: 1em 51px 1em (6 + 51px);
+  margin: 0 -51px;
   flex-grow: 1;
+}
+
+.title-container:active, .start-timing-btn:active, .fold-indicator:active {
+  background-color: #eee8d5;
 }
 
 .title {
@@ -150,22 +186,73 @@ canvas {
 }
 
 .start-timing-btn {
-  padding: 1em 1.5em;
+  width: 19px;
+  padding: 1em $text-to-edge;
+  text-align: center;
 }
 
 .fold-indicator {
-  text-align: center;
-  padding: 1em 1em 1em $text-to-edge;
   i {
+    text-align: center;
+    width: 52px;
+    line-height: 51px;
     transition: transform ease-in-out $med-dur;
-    width: 22px;
   }
+}
+
+.checkbox {
+  transform: translate(0, 0);
+  width: 51px;
+  height: 51px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  div {
+    border: 1px solid $base3;
+    div {
+      background-color: $base3;
+      width: 11px;
+      height: 11px;
+      border: 2px solid $base1;
+    }
+  }
+}
+.checkbox.checked > div > div {
+  background-color: $base2;
+}
+
+.chevron {
+  transform: translate(0, 0);
+  width: 51px;
+  height: 51px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  & > div {
+    transform: rotate(-45deg) translate(-20%, -20%);
+    transition: transform ease-in-out $med-dur;
+    border: 1px solid $base3;
+    border-color: transparent $base3 $base3 transparent;
+    & > div {
+      border: 2px solid $base1;
+      border-color: transparent $base1 $base1 transparent;
+      width: 8px;
+      height: 8px;
+      & > div {
+        border: 1px solid $base3;
+        border-color: transparent $base3 $base3 transparent;
+      }
+    }
+  }
+}
+.chevron.open > div {
+  transform: rotate(45deg) translate(-20%, -20%);
 }
 
 #task-container {
   position: absolute;
   width: 100%;
-  padding-top: 1.5em;
+  padding-top: 0;
   border-bottom: 1px solid $base2;
   ul {
     list-style: none;
@@ -194,7 +281,6 @@ canvas {
 .after-tasks {
   position: absolute;
   transition: transform ease-in-out $med-dur;
-  margin-top: 1.5em;
 }
 
 .indent-indicator {
@@ -204,10 +290,8 @@ canvas {
   border-width: 0 1px;
   top: -1px;
   bottom: 0;
-  left: ($text-to-edge + 11 - 2);
+  left: 23.5px;
   background: rgba($prm-color, 0.4);
-  //opacity: .6;
-  z-index: -1;
 }
 
 .indent-top-half {
@@ -219,7 +303,7 @@ canvas {
 }
 
 .indent-faded {
-  opacity: .2;
+  opacity: .4;
 }
 
 .modal {
@@ -260,9 +344,6 @@ canvas {
 .begin-session {
   color: #000;
   background-color: #fff;
-  //position: absolute;
-  //right: $text-to-edge;
-  //top: 3em;
   padding: $text-to-edge / 2;
   text-align: center;
   color: $sec-text-color;
@@ -283,16 +364,38 @@ canvas {
   td {
     width: 4em;
   }
-  //transform: scale(0);
-  //transition: transform ease-in-out 0.2s,
-              //opacity ease-in-out 0.2s;
-  //opacity: 0;
-  //&.open {
-    //transform: scale(1);
-    //opacity: 1;
-  //}
   .btn:active {
     color: #fff;
     background: $prm-color;
+  }
+}
+
+// ****************************************
+// In session modal
+.session-modal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 200;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  background-color: #000;
+  color: #fff;
+  font-size: 1.5em;
+  h1 {
+    font-size: 1.6em;
+    font-weight: 400;
+  }
+}
+
+.session-modal-btn-row {
+  width: 100%;
+  .white-outline-btn {
+    text-align: center;
+    width: 30%;
   }
 }

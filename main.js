@@ -36,13 +36,11 @@ const SCROLL_HORIZONTAL = 2
 
 let scrollDirection = SCROLL_UNDETERMINED
 let domRender
-let canvas, ctx
+let canvas, ctx, gridBarCanvas, gridBarCtx
 let containerRect = {width: 0, height: 0}
 
 const hasChromeAlarm = 'chrome' in window && 'alarms' in chrome
 const hasNotifications = 'Notification' in window
-console.log(hasChromeAlarm ? 'is Chrome' : 'Not chrome app')
-
 if (hasNotifications) Notification.requestPermission()
 
 // Helper functions
@@ -193,11 +191,10 @@ const initializeState = () => {
 const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
   const {task, sessions, children} = node
   for (let i = 0; i < sessions.length; ++i) {
-    let s = sessions[i]
-    if (inInterval(s.startTime, startTime, endTime) ||
-        inInterval(s.endTime, startTime, endTime)) {
-      ctx.fillRect((s.startTime - startTime) * msSize, offset * taskLineH + 24 + 2,
-                   (s.endTime - s.startTime) * msSize, taskLineH - 3)
+    let {startTime: start, endTime: end} = sessions[i]
+    if (inInterval(start, startTime, endTime) || inInterval(end, startTime, endTime)) {
+      ctx.fillRect((start - startTime) * msSize, offset * taskLineH + 2,
+                   (end - start) * msSize, taskLineH - 3)
     }
   }
   return task.open === true ? fold(renderSessions.$(ctx, msSize, startTime, endTime), offset + 1, children)
@@ -218,40 +215,41 @@ const calcGrid = () => {
 }
 
 let lastRenderTime = now()
-const gridBarH = 24
+const gridBarH = 16
 const render = (time) => {
   const w = canvas.width
   const h = canvas.height
-  if (velocity !== 0) {
+  if (velocity !== 0) { // handle velocity
     const dt = time - lastRenderTime
     state.timeView.startTime -= velocity * pixelSize * dt
     calcGrid()
     velocity = velocity > 0 ? Math.max(0, velocity - (dt * 0.004))
                             : Math.min(0, velocity + (dt * 0.004))
   }
-  if (containerRect.width !== w || containerRect.height !== h) {
-    resizeCanvas(canvas, containerRect)
+  if (containerRect.width * devicePixelRatio !== w ||
+      containerRect.height * devicePixelRatio - gridBarH !== h) { // resize or clear canvas
+    resizeCanvas(canvas, gridBarCanvas, containerRect)
   } else {
     ctx.clearRect(0, 0, w, h)
   }
-  ctx.fillStyle = base2
-  ctx.fillRect(0, 0, w, gridBarH)
-  ctx.fillStyle = base1
+  gridBarCtx.fillStyle = base2 // draw grid bar
+  gridBarCtx.fillRect(0, 0, w, gridBarH)
+  gridBarCtx.fillStyle = base1 // fixme
   const showHours = (endTime - state.timeView.startTime) < day
   const lineTime = showHours ? hour : day
   const lineDist = showHours ? daySize / 24 : daySize
-  ctx.fillStyle = base1
-  for (let i = 0; startTime + i * lineTime < endTime; ++i) {
-    ctx.fillRect(-offset + i * lineDist, 0, 1, 24)
+  gridBarCtx.fillStyle = base1
+  for (let i = 0; startTime + i * lineTime < endTime; ++i) { // draw bar vertical lines
+    gridBarCtx.fillRect(-offset + i * lineDist, 0, 1, gridBarH)
+  }
+  gridBarCtx.fillStyle = base00
+  for (let i = 0; i < daysVisible; ++i) { // draw dates
+    let t = startTime + (i * day)
+    gridBarCtx.fillText(getDate(t) + ' / ' + getMonth(t), -offset + i * daySize + 5, 12)
   }
   ctx.fillStyle = base2
-  for (let i = 0; startTime + i * lineTime < endTime; ++i) {
-    ctx.fillRect(-offset + i * lineDist, 24, 1, h-24)
-  }
-  ctx.fillStyle = base00
-  for (let i = 0; i < daysVisible; ++i) {
-    let t = startTime + (i * day)
-    ctx.fillText(getDate(t) + ' / ' + getMonth(t), -offset + i * daySize + 5, 15)
+  for (let i = 0; startTime + i * lineTime < endTime; ++i) { // draw long vertical lines
+    ctx.fillRect(-offset + i * lineDist, 0, 1, h)
   }
   ctx.fillStyle = base2
   fold(renderSessions.$(ctx, msSize, state.timeView.startTime, endTime), 0, state.taskTree)
@@ -261,12 +259,17 @@ const render = (time) => {
   }
 }
 
-const resizeCanvas = (canvas, {width: w, height: h}) => {
+const resizeCanvas = (canvas, gridBarCanvas, {width: w, height: h}) => {
   canvas.width = w * window.devicePixelRatio
-  canvas.height = h * window.devicePixelRatio
+  canvas.height = (h - gridBarH) * window.devicePixelRatio
   canvas.style.width = w + 'px'
-  canvas.style.height = h + 'px'
+  canvas.style.height = h - gridBarH + 'px'
   ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
+  gridBarCanvas.width = w * window.devicePixelRatio
+  gridBarCanvas.height = gridBarH * window.devicePixelRatio
+  gridBarCanvas.style.width = w + 'px'
+  gridBarCanvas.style.height = gridBarH + 'px'
+  gridBarCtx.scale(window.devicePixelRatio, window.devicePixelRatio)
 }
 
 listen(document, 'DOMContentLoaded', () => {
@@ -278,6 +281,8 @@ listen(document, 'DOMContentLoaded', () => {
 
     canvas = document.getElementById('canvas')
     ctx = canvas.getContext('2d')
+    gridBarCanvas = document.getElementById('grid-bar')
+    gridBarCtx = gridBarCanvas.getContext('2d')
 
     const content = document.getElementById('task-container')
     listen(window, 'resize', updateContainerRect)
@@ -582,16 +587,14 @@ const taskOptionsModal = (parentChildren, node, pos, nrOfSubtasks) =>
   ])
 
 const foldIndicator = (pos, nrOfSubtasks, node) =>
-  h('div.fold-indicator', {
+  h('a.fold-indicator', {
     on: {click: [toggleFold, pos, nrOfSubtasks, node]},
-  }, [h('i.fa.fa-chevron-down', {
-    style: {transform: `rotate(${node.task.open ? 0 : -90}deg)`},
-  })])
+  }, [h('div.chevron', {class: {open: node.task.open}}, [h('div', [h('div')])])])
 
 const doneCheckbox = (task) =>
   h('div.fold-indicator', {
     on: {click: [toggleDone, task]},
-  }, [task.done ? h('i.fa.fa-check-square') : h('i.fa.fa-square-o')])
+  }, [h('div.checkbox', {class: {checked: task.done}}, [h('div', [h('div')])])])
 
 const vtask = (parentChildren, level, [pos, nodes], node) => {
   const {task, children} = node
@@ -610,16 +613,16 @@ const vtask = (parentChildren, level, [pos, nodes], node) => {
     },
     map((l) => h('div.indent-indicator', {
       class: {'indent-faded': l !== level},
-      style: {marginLeft: `${l}em`, backgroundColor: colorAtIndent(l)}
+      style: {marginLeft: `${l*19}px`, backgroundColor: colorAtIndent(l)}
     }), fromTo(0, level)).concat([
       task.hasSubtasks ? foldIndicator(pos, nrOfSubtasks, node) : doneCheckbox(task),
-      h('div.title-container', {
+      h('a.title-container', {
         on: {click: [toggleOptionsMenu, task]},
       }, [h('span.title', {
         class: {done: task.done},
         style: {color: !task.done ? colorAtIndent(level) : base1}
       }, task.title)]),
-      h('div.start-timing-btn', {on: {click: [toggleTimerModal, task]}}, [h('i.fa.fa-lg.fa-clock-o')]),
+      h('a.start-timing-btn', {on: {click: [toggleTimerModal, task]}}, [h('i.fa.fa-lg.fa-clock-o')]),
     ])),
     notEmpty(subTasks) ? h('ul', {hook: {remove: delayRm((newPos-pos-1)*medDur)}}, subTasks) : '',
     task.timerModalOpen ? modal(startSessionModal(node), toggleTimerModal.$(task)) : '',
@@ -639,6 +642,7 @@ const vtree = (state) => {
       h('div.app-name', 'Timesheet'),
       h('i.menu-btn.fa.fa-ellipsis-v'),
     ]),
+    h('canvas#grid-bar', []),
     h('div.top-bar-filler'),
     h('canvas#canvas'),
     h('div#task-container', {style: {height: nTasks*taskLineH+'px'}}, [
