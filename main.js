@@ -8,6 +8,7 @@ const patch = snabbdom.init([
 const h = require('snabbdom/h')
 const attachTo = require('snabbdom/helpers/attachto')
 const syncedDB = require('synceddb-client')
+const stack = require('../stack-concat/stack-concat.js')
 
 // Colors
 const base03 = '#002b36'
@@ -137,7 +138,7 @@ const stores = {
   sessions: [
     ['byTask', 'taskKeys', {multiEntry: true}],
     ['byStartTime', 'startTime'],
-    ['byEndTime', 'endTime', {multiEntry: false}],
+    ['byEndTime', 'endTime'],
     ['byDay', 'day'],
   ]
 }
@@ -203,11 +204,10 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
 
 let msSize, daysVisible, daySize, startTime, endTime, offset, pixelSize
 const calcGrid = () => {
-  const tW = state.timeView
-  const {startTime: start, duration} = tW
+  const {startTime: start, duration} = state.timeView
   endTime = start + duration
+  daysVisible = daysIn(endTime) - daysIn(start) + 1
   msSize = containerRect.width / duration
-  daysVisible = Math.ceil(duration / day) + 1
   daySize = containerRect.width / (duration / day)
   startTime = start - (start % day)
   offset = (start % day) / day * daySize
@@ -319,19 +319,19 @@ const touchMove = (ev) => {
   const tW = state.timeView
   if (touchesDown.length === 1) {
     if (scrollDirection === SCROLL_VERTICAL) return
-    ev.preventDefault()
-    const t = touchesDown[0]
-    const {pageX: x, pageY: y} = find((moved) => moved.identifier === t.id, ev.changedTouches)
+    var t = touchesDown[0]
+    var {pageX: x, pageY: y} = find((moved) => moved.identifier === t.id, ev.changedTouches)
     if (scrollDirection === SCROLL_UNDETERMINED) {
-      if (Math.abs(x - t.x) > 30) {
+      if (Math.abs(x - t.x) > 20) {
         scrollDirection = SCROLL_HORIZONTAL
         t.x = x
         t.y = y
         requestAnimationFrame(render)
-      } else if (Math.abs(y - t.y) > 30) {
+      } else if (Math.abs(y - t.y) > 20) {
         scrollDirection = SCROLL_VERTICAL
       }
     } else if (scrollDirection === SCROLL_HORIZONTAL) {
+      ev.preventDefault()
       tW.startTime -= (x - t.x) * pixelSize
       startTimeHistory.push([now(), x])
       t.x = x
