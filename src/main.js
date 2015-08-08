@@ -8,7 +8,7 @@ const patch = snabbdom.init([
 const h = require('snabbdom/h')
 const attachTo = require('snabbdom/helpers/attachto')
 const syncedDB = require('synceddb-client')
-const stack = require('../stack-concat/stack-concat.js')
+const stack = require('../../stack-concat/stack-concat.js')
 
 // Colors
 const base03 = '#002b36'
