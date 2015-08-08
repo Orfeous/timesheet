@@ -161,9 +161,7 @@ const isSessionDone = (s) => s.endTime !== 0 && s.endTime < now()
 
 const loadSessions = (node) =>
   db.sessions.byTask.get(node.task.key).then((s) => node.sessions = filter(isSessionDone, s))
-const loadSessionsEndingAfterNow = () => db.sessions.byEndTime.inRange({gte: now()})
-const loadSessionsEndingAtZero = () => db.sessions.byEndTime.get(0)
-const loadActiveSessions = () => loadSessionsEndingAfterNow().then((l) => notEmpty(l) ? l : loadSessionsEndingAtZero())
+const loadActiveSessions = () => db.sessions.byEndTime.get(0)
 const addChildTasks = (node, children) => (node.children = map((t) => taskNode(node, t), children))
 const loadChildren = (node) => Promise.all(map(loadTaskIfOpen, node.children))
 const loadTaskIfOpen = (node) =>
@@ -377,6 +375,12 @@ const touchCancel = (ev) => {
 const notify = (msDelay) => {
   if (hasChromeAlarm) {
     chrome.alarms.create('countdown', {when: now() + msDelay})
+  } else if ('cordova' in window) {
+    cordova.plugins.notification.local.schedule({
+      text: 'Task done yolo',
+      at: new Date(msDelay + now()),
+      sound: 'file://sound.mp3',
+    })
   } else {
     setTimeout(() => {
       navigator.vibrate([100, 100, 100, 300, 300])
@@ -442,7 +446,11 @@ const createSession = (node, duration) => {
     taskKeys: keys,
     startTime,
     day: daysIn(startTime),
-    endTime: duration === _ ? 0 : startTime + duration
+    endTime: 0 // endTime = 0 means active/open
+  }
+  if (duration !== undefined) {
+    session.duration = duration
+    notify(duration)
   }
   state.activeSession = session
   node.task.timerModalOpen = false
@@ -451,7 +459,8 @@ const createSession = (node, duration) => {
 }
 
 const endSession = (session) => {
-  if (session.endTime === 0) session.endTime = now()
+  session.endTime = now()
+  delete session.duration
   db.sessions.put(session).then(() => {
     state.activeSession = _
     const sessionsLists = map(prop.$('sessions'), walkTreeByTaskKey(session.taskKeys, state.taskTree))
@@ -521,40 +530,43 @@ const startSessionModal = (node) =>
     h('h2', 'or after'),
     h('table', [
       h('tr', [
-        h('td.td-btn', {on: {click: [notify, second]}}, '1s'),
-        h('td.td-btn', {on: {click: [notify, 5*second]}}, '5s'),
-        h('td.td-btn', {on: {click: [notify, minute]}}, '1m'),
+        h('td.td-btn', {on: {click: [createSession, node, second]}}, '1s'),
+        h('td.td-btn', {on: {click: [createSession, node, 5*second]}}, '5s'),
+        h('td.td-btn', {on: {click: [createSession, node, minute]}}, '1m'),
       ]),
       h('tr', [
-        h('td.td-btn', '15m'),
-        h('td.td-btn', '20m'),
-        h('td.td-btn', '25m'),
+        h('td.td-btn', {on: {click: [createSession, node, 15*minute]}}, '15m'),
+        h('td.td-btn', {on: {click: [createSession, node, 20*minute]}}, '20m'),
+        h('td.td-btn', {on: {click: [createSession, node, 25*minute]}}, '25m'),
       ]),
       h('tr', [
-        h('td.td-btn', '30m'),
-        h('td.td-btn', '35m'),
-        h('td.td-btn', '40m'),
+        h('td.td-btn', {on: {click: [createSession, node, 30*minute]}}, '30m'),
+        h('td.td-btn', {on: {click: [createSession, node, 35*minute]}}, '35m'),
+        h('td.td-btn', {on: {click: [createSession, node, 40*minute]}}, '40m'),
       ]),
       h('tr', [
-        h('td.td-btn', '45m'),
-        h('td.td-btn', '50m'),
-        h('td.td-btn', '55m'),
+        h('td.td-btn', {on: {click: [createSession, node, 45*minute]}}, '45m'),
+        h('td.td-btn', {on: {click: [createSession, node, 50*minute]}}, '50m'),
+        h('td.td-btn', {on: {click: [createSession, node, 55*minute]}}, '55m'),
       ]),
       h('tr', [
-        h('td.td-btn', '1h'),
-        h('td.td-btn', '1h 15m'),
-        h('td.td-btn', '1h 30m'),
+        h('td.td-btn', {on: {click: [createSession, node, hour]}}, '1h'),
+        h('td.td-btn', {on: {click: [createSession, node, hour+15*minute]}}, '1h 15m'),
+        h('td.td-btn', {on: {click: [createSession, node, 1*hour+30*minute]}}, '1h 30m'),
       ]),
     ]),
   ])
 
 const sessionModal = (session) =>
-  h('div', [
-    'Session started!', h('br'),
-    session.startTime, h('br'),
-    session.endTime || 'never ends',
-    h('div.btn', {on: {click: [endSession, session]}}, 'End'),
-  ])
+  attachTo(document.body, h('div.session-modal', [
+    h('h1', 'Session started!'),
+    (new Date(session.startTime)).toString(), h('br'),
+    session.duration ? (new Date(session.startTime + session.duration)).toString() : 'never ends',
+    h('div.row.session-modal-btn-row', [
+      h('div.white-outline-btn', 'Pause'),
+      h('div.white-outline-btn', {on: {click: [endSession, session]}}, 'End'),
+    ])
+  ]))
 
 const createTaskModal = (newTask) =>
   h('div', {
@@ -648,7 +660,7 @@ const vtree = (state) => {
     h('div#task-container', {style: {height: nTasks*taskLineH+'px'}}, [
       h('ul#tasks', tasks),
       state.newTask ? modal(createTaskModal(state.newTask), dropNewTask) : '',
-      state.activeSession ? modal(sessionModal(state.activeSession), noop) : '',
+      state.activeSession ? sessionModal(state.activeSession) : '',
     ]),
     h('div.after-tasks', {
       style: {transform: `translateY(${nTasks*taskLineH}px)`,
