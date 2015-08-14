@@ -183,48 +183,40 @@ const defaultState = {
 
 const isSessionDone = (s) => s.endTime !== 0
 
-/*
-const getDay = (days, start, day) => {
-  const offset = start - day
-  const existing = days[offset]
-  if (days[offset] === _) days[offset] = []
-  return days[offset]
-}
-
-const groupSessionsByDays = (sessions) => {
-  if (sessions.length === 0) return
-  const startTime = head(sessions).startTime
-  const startDay = T.daysIn(startTime)
-  const days = []
-  each((s) => {
-    const belongsTo = T.daysBetween(s.startTime, s.endTime)
-    each((day) => getDay(days, startDay, day), belongsTo)
-  }, sessions)
-  return [startTime, days]
-}
-*/
-
 const loadTaskByParentKey = (key) => db.tasks.byParent.get(key)
+
 const loadSessions = (node) => db.sessions.byTask.get(node.task.key).then(filter.$(isSessionDone))
+
 const loadActiveSessions = () => db.sessions.byEndTime.get(0)
+
 const loadAndSetSessions = (node) => loadSessions(node).then((s) => node.sessions = s)
+
 const addChildTasks = (node, children) => {
   node.children = map((t) => taskNode(node, t), children)
 }
+
 const isNodeOpen = (node) => node.task.open
+
 const loadChildren = (node) => Promise.all(map(loadTaskIfOpen, node.children))
+
 const loadTaskIfOpen = (node) =>
   node.task.open === true ? loadTaskByParentKey(node.task.key).then(addChildTasks.$(node))
                                                               .then(loadAndSetSessions.$(node))
                                                               .then(loadChildren.$(node))
                           : loadAndSetSessions(node)
+
 const loadChildTasks = (parentKey) => db.tasks.byParent.get(parentKey)
+
 const loadChildNodes = (parentNode) => loadChildTasks(parentNode.task.key).then(map.$(taskNode.$(parentNode)))
+
 const setChildNodes = (parentNode, children) => parentNode.children = children
+
 const loadSetChildNodes = (parentNode) => loadChildNodes(parentNode).then(setChildNodes.$(parentNode))
+
 const initChildNodes = (parentNode) => loadSetChildNodes(parentNode)
                                        .then(copyDaysFromNodeToChildren.$(parentNode))
                                        .then(() => Promise.all(map(initChildNodes, filter(isNodeOpen, parentNode.children))))
+
 const initializeState = () => {
   const restoredState = null
   const state = restoredState !== null ? JSON.parse(restoredState) : defaultState
@@ -281,20 +273,18 @@ const initEmptyDaysArr = (start, end) => map(Day, range(start - PRELOAD_SIZE_DAY
 
 const copyDaysFromTo = (childKey, parentDays, childDays) => R.zipWith(copyDayFromTo.$(childKey), parentDays, childDays)
 
-//const initDaysFromParent = (childKey, parentDays) => copyDaysFromTo(childKey, parentDay, initEmptyDaysArr(startTime, endTime))
-
 const copyDaysFromNodeToChild = (parentNode, childNode) => copyDaysFromTo(childNode.task.key, parentNode.days, childNode.days)
 
 const copyDaysFromNodeToChildren = (node) => map(copyDaysFromNodeToChild.$(node), node.children)
 
-const addSessionToDays = (nodes, offset, session) => {
+const addSessionToDays = (nodes, dayNr, session) => {
   const daysList = map(prop.$('days'), walkTreeByTaskKey(session.taskKeys, nodes))
   if (isEmpty(daysList)) console.log('session without task', session.key)
-  each((days) => addSessionToDay(session, days[offset]), daysList)
+  each((days) => addSessionToDay(session, days[dayNr - startDay + PRELOAD_SIZE_DAY]), daysList)
 }
 const loadDay = (nodes, dayNr) =>
   loadSessionsInDay(dayNr).then((ses) => {
-    each(addSessionToDays.$(nodes, dayNr - startDay + PRELOAD_SIZE_DAY), ses)
+    each(addSessionToDays.$(nodes, dayNr), ses)
   })
 const prependExtraDay = (dayNr, nodes) => {
   eachNode((node) => node.days.unshift(Day(dayNr)), nodes)
@@ -306,13 +296,13 @@ const appendExtraDay = (dayNr, nodes) => {
 }
 
 const dropPreDay = (nodes) => eachNode((node) => node.days.shift(), nodes)
+
 const dropPostDay = (nodes) => eachNode((node) => node.days.pop(), nodes)
 
 // Canvas rendering
 
 const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
   const {task, sessions, children, days} = node
-  //console.log(node)
   rendered = 0
   for (let i = 0; i < sessions.length; ++i) {
     let {startTime: start, endTime: end} = sessions[i]
@@ -322,7 +312,6 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
                    (end - start) * msSize, taskLineH - 3)
     }
   }
-  //console.log('old rendered ', rendered)
   var rendered = 0
   ctx.fillStyle = 'rgba(0, 0, 100, .2)'
   for (let dayNr = startDay; dayNr <= endDay; ++dayNr) {
@@ -335,7 +324,6 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
     }
   }
   ctx.fillStyle = base2 // fixme
-  //console.log('rendered ', startDay, rendered)
   return task.open === true ? fold(renderSessions.$(ctx, msSize, startTime, endTime), offset + 1, children)
                             : offset + 1
 }
@@ -354,7 +342,6 @@ const calcGrid = () => {
   offset = (start % day) / day * daySize
   pixelSize = duration / containerRect.width
   if (newStartDay < startDay) {
-    //console.log(state.taskTree)
     //console.log('Load pre', newStartDay)
     prependExtraDay(newStartDay, state.taskTree)
   } else if (newStartDay > startDay) {
@@ -565,7 +552,7 @@ const taskNode = (parent, task) => ({
   parent,
   children: [],
   sessions: [],
-  days: log('empty', initEmptyDaysArr(startDay, endDay))
+  days: initEmptyDaysArr(startDay, endDay)
 })
 
 // Modify state
@@ -634,7 +621,9 @@ const endSession = (session) => {
     state.activeSession = _
     const sessionsLists = map(prop.$('sessions'), walkTreeByTaskKey(session.taskKeys, state.taskTree))
     each((sessions) => sessions.push(session), sessionsLists)
+    each((dayNr) => addSessionToDays(state.taskTree, dayNr, session), session.days)
     domRender()
+    requestAnimationFrame(render)
   })
 }
 
