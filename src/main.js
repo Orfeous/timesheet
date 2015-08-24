@@ -318,9 +318,12 @@ const renderSessions = (ctx, msSize, startTime, endTime, offset, node) => {
   var rendered = 0
   ctx.fillStyle = 'rgba(0, 0, 100, .2)'
   for (let dayNr = startDay; dayNr <= endDay; ++dayNr) {
+    const dayStartTime = dayNr * day
+    const dayEndTime = (dayNr + 1) * day
     let sessions = days[PRELOAD_SIZE_DAY - startDay + dayNr].sessions
     for (let i = 0; i < sessions.length; ++i) {
-      let {startTime: start, endTime: end} = sessions[i]
+      const start = Math.max(sessions[i].startTime, dayStartTime)
+      const end = Math.min(sessions[i].endTime, dayEndTime)
       rendered++
       ctx.fillRect((start - startTime) * msSize, offset * taskLineH + 2,
                    (end - start) * msSize, taskLineH - 3)
