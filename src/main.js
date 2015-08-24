@@ -9,10 +9,12 @@ const h = require('snabbdom/h')
 const attachTo = require('snabbdom/helpers/attachto')
 const syncedDB = require('synceddb-client')
 const stack = require('../../stack-concat/stack-concat.js')
-
 const R = require('ramda')
+const treis = require('treis')
 
 import * as T from './time'
+import * as Task from './task'
+import * as TaskNode from './tasknode'
 
 // Colors
 const base03 = '#002b36'
@@ -102,6 +104,7 @@ const contains = (elm, list) => list.indexOf(elm) !== -1
 const inInterval = (n, l, h) => (l <= n && n <= h)
 const intervalsOverlap = (l1, h1, l2, h2) => inInterval(l1, l2, h2) || inInterval(h1, l2, h2)
 const then = (fn, p) => p.then(fn)
+const reduceIdx = R.addIndex(R.reduce)
 
 Function.prototype.$ = function() {
   var fn = this
@@ -192,7 +195,7 @@ const loadActiveSessions = () => db.sessions.byEndTime.get(0)
 const loadAndSetSessions = (node) => loadSessions(node).then((s) => node.sessions = s)
 
 const addChildTasks = (node, children) => {
-  node.children = map((t) => taskNode(node, t), children)
+  node.children = map((t) => TaskNode.init(node, t, initEmptyDaysArr(startDay, endDay)), children)
 }
 
 const isNodeOpen = (node) => node.task.open
@@ -583,7 +586,8 @@ const toggleFold = (pos, nrOfSubtasks, node) => {
 }
 
 const toggleDone = (task) => {
-  task.done = !task.done
+  //task.done = !task.done
+  task = Task.update(Task.Action.ToggleDone(), task)
   setTimeout(() => putTask(task), medDur)
   domRender()
 }
@@ -595,7 +599,7 @@ const toggleTimerModal = (task, ev) => {
 }
 
 const createSession = (node, duration) => {
-  const startTime = T.now() - hour
+  const startTime = T.now()
   const keys = map(prop.$('key'), map(prop.$('task'), walkUpNodes([], node)))
   const session = {
     taskKeys: keys,
@@ -627,11 +631,6 @@ const endSession = (session) => {
   })
 }
 
-const toggleOptionsMenu = (task) => {
-  task.showOptionsMenu = !task.showOptionsMenu
-  domRender()
-}
-
 const beginCreateTask = (parentNode, target) => {
   if (parentNode !== _) {
     const parent = parentNode.task
@@ -654,16 +653,11 @@ const updateNewSubtaskTitle = (task, ev) => {
 
 const createNewTask = ({parentNode, target, title}, ev) => {
   ev.preventDefault()
-  const createdTask = {title, open: false}
-  if (parentNode === _) {
-    createdTask.atRoot = 1
-  } else {
-    const parent = parentNode.task
-    createdTask.parent = parent.key
-    if (parent.hasSubtasks !== true) {
-      parent.hasSubtasks = true
-      putTask(parent)
-    }
+  const parentTask = parentNode === _ ? _ : parentNode.task
+  const createdTask = Task.init(parentTask, title)
+  if (parentTask.hasSubtasks !== true) {
+    parentTask.hasSubtasks = true
+    putTask(parentTask)
   }
   target.push(taskNode(parent, createdTask))
   state.newTask = _
@@ -678,6 +672,11 @@ const deleteTask = (node, parentChildren) => {
   domRender()
   db.tasks.delete(node.task.key)
 }
+
+const updateTaskNode = R.curry((idx, action) => {
+  state.taskTree[idx] = TaskNode.update(action, state.taskTree[idx])
+  domRender()
+})
 
 // View
 
@@ -740,68 +739,10 @@ const createTaskModal = (newTask) =>
     ])
   ])
 
-const taskOptionsModal = (parentChildren, node, pos, nrOfSubtasks) =>
-  h('div', {style: {}}, [
-    h('div.btn.btn-block', {
-      style: {marginBottom: '.5em'}, on: {click: [toggleFold, pos, nrOfSubtasks, node]}
-    }, [h('i.fa.fa-chevron-right'), 'Unfold']),
-    h('div.btn.btn-block', {
-      style: {marginBottom: '.5em'}, on: {click: [toggleTimerModal, node.task, node.children]}
-    }, [h('i.fa.fa-clock-o'), 'Start timing']),
-    h('div.btn.btn-block', {
-      style: {marginBottom: '.5em'}, on: {click: [beginCreateTask, node, node.children]}
-    }, [h('i.fa.fa-plus'), 'Create subtask']),
-    h('div.btn.btn-block.btn-danger', {
-      on: {click: [deleteTask, node, parentChildren]}
-    }, [h('i.fa.fa-times'), 'Delete task']),
-  ])
-
-const foldIndicator = (pos, nrOfSubtasks, node) =>
-  h('a.fold-indicator', {
-    on: {click: [toggleFold, pos, nrOfSubtasks, node]},
-  }, [h('div.chevron', {class: {open: node.task.open}}, [h('div', [h('div')])])])
-
-const doneCheckbox = (task) =>
-  h('div.fold-indicator', {
-    on: {click: [toggleDone, task]},
-  }, [h('div.checkbox', {class: {checked: task.done}}, [h('div', [h('div')])])])
-
-const vtask = (parentChildren, level, [pos, nodes], node) => {
-  const {task, children} = node
-  const [newPos, subTasks] = task.open ? fold(vtask.$(children, level + 1), [pos + 1, []], children)
-                                       : [pos + 1, []]
-  const nrOfSubtasks = newPos - pos - 1
-  return [newPos, append(h('li.task', {
-    class: {folded: !task.open},
-  }, [
-    h('div.task-line', {
-      style: {opacity: 0, transform: `translateY(${pos*taskLineH}px)`,
-              transitionDuration: `${medDur}ms, ${medDur/2}ms`,
-              transitionDelay: `${(pos-foldedAt)*medDur/6+(medDur/2)}ms, ${foldDir===FOLD_IN ? foldDiff*medDur/6+medDur : 0}ms`,
-              delayed: {opacity: 1, transform: `translateY(${pos*taskLineH}px)`},
-              destroy: {opacity: 0, transitionDelay: `${(foldDiff-(pos-foldedAt))*medDur/6}ms, 0ms`}},
-    },
-    map((l) => h('div.indent-indicator', {
-      class: {'indent-faded': l !== level},
-      style: {marginLeft: `${l*19}px`, backgroundColor: colorAtIndent(l)}
-    }), fromTo(0, level)).concat([
-      task.hasSubtasks ? foldIndicator(pos, nrOfSubtasks, node) : doneCheckbox(task),
-      h('a.title-container', {
-        on: {click: [toggleOptionsMenu, task]},
-      }, [h('span.title', {
-        class: {done: task.done},
-        style: {color: !task.done ? colorAtIndent(level) : base1}
-      }, task.title)]),
-      h('a.start-timing-btn', {on: {click: [toggleTimerModal, task]}}, [h('i.fa.fa-lg.fa-clock-o')]),
-    ])),
-    notEmpty(subTasks) ? h('ul', {hook: {remove: delayRm((newPos-pos-1)*medDur)}}, subTasks) : '',
-    task.timerModalOpen ? modal(startSessionModal(node), toggleTimerModal.$(task)) : '',
-    task.showOptionsMenu ? modal(taskOptionsModal(parentChildren, node, pos, nrOfSubtasks), toggleOptionsMenu.$(task)) : '',
-  ]), nodes)]
-}
+const taskNodeView = (acc, model, idx) => TaskNode.view(state.taskTree, foldedAt, foldDir, foldDiff, [], updateTaskNode(idx), acc, model)
 
 const vtree = (state) => {
-  const [nTasks, tasks] = fold(vtask.$(state.taskTree, 0), [0, []], state.taskTree)
+  const [nTasks, tasks] = reduceIdx(taskNodeView, [0, []], state.taskTree)
   const newHeight = nTasks * taskLineH + gridBarH
   if (containerRect.height !== newHeight) {
     containerRect.height = newHeight
