@@ -3,14 +3,18 @@ const Type = require('union-type')
 const h = require('snabbdom/h')
 import * as Task from './task'
 const treis = require('treis')
+const Future = require('ramda-fantasy').Future
 
 const _ = undefined // jshint ignore:line
 const c = R.compose
 import {modal, delayRm} from './snabbdom-helpers'
+import {putTask} from './db'
 
 function updateWhere(pred, fn, list) {
   return R.map(function(elm) { return pred(elm) === true ? fn(elm) : elm; }, list);
 }
+
+const promToFut = (promFn) => Future((rej, res) => promFn().then(res, rej))
 
 const base03 = '#002b36'
 const base02 = '#073642'
@@ -55,13 +59,31 @@ const keyL = c(R.lensProp('task'), R.lensProp('key'))
 const childrenL = R.lensProp('children')
 
 const updateChild = R.curry((key, action, children) =>
-  updateWhere(c(R.equals(key), R.view(keyL)), update(action), children))
+  R.reduce(([children, effects], child) => {
+    if (child.task.key === key) {
+      const [newChild, newEffects] = update(action, child)
+      children.push(newChild)
+      return [children, R.concat(effects, newEffects)]
+    } else {
+      children.push(child)
+      return [children, effects]
+    }
+  }, [[], []], children))
 
+const noEffect = (model) => [model, []]
+
+// update : action -> model -> [model', [Futures]]
 export const update = Action.caseOn({
-  UpdateTask: (taskAction, model) => R.over(taskLens, Task.update(taskAction), model),
-  UpdateChild: (key, action, model) => R.over(childrenL, updateChild(key, action), model),
-  AppendChild: (child, model) => R.over(childrenL, R.append(child), model),
-  ToggleOptionsModal: R.over(R.lensProp('showOptionsModal'), R.not),
+  UpdateTask: (taskAction, model) => {
+    const [newTask, effects] = Task.updateE(taskAction, model.task)
+    return [R.set(taskLens, newTask, model), R.map(R.map(Action.UpdateTask), effects)]
+  },
+  UpdateChild: (key, action, model) => {
+    const [newChildren, effects] = updateChild(key, action, model.children)
+    return [R.set(childrenL, newChildren, model), effects]
+  },
+  AppendChild: (child, model) => noEffect(R.over(childrenL, R.append(child), model)),
+  ToggleOptionsModal: c(noEffect, R.over(R.lensProp('showOptionsModal'), R.not)),
 })
 
 // View
@@ -70,9 +92,8 @@ const FOLD_IN = 0, FOLD_OUT = 1
 const taskLineH = 51
 const medDur = 200
 
-const isEven = (n) => n % 2 === 0
 const indentColors = ['#b58900', '#cb4b16', '#dc322f', '#d33682', '#6c71c4', '#268bd2', '#2aa198', '#859900']
-const colorAtIndent = (n) => indentColors[isEven(n) ? n / 2 : (n - 1) / 2 + 4]
+const colorAtIndent = (n) => indentColors[n % 2 === 0 ? n / 2 : (n - 1) / 2 + 4]
 
 const log = console.log.bind(log)
 

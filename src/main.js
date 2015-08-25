@@ -7,7 +7,6 @@ const patch = snabbdom.init([
 ])
 const h = require('snabbdom/h')
 const attachTo = require('snabbdom/helpers/attachto')
-const syncedDB = require('synceddb-client')
 const stack = require('../../stack-concat/stack-concat.js')
 const R = require('ramda')
 const treis = require('treis')
@@ -140,41 +139,7 @@ const focus = (vnode) => vnode.elm.focus()
 const listen = (elm, event, cb) => elm.addEventListener(event, cb, false)
 const targetValue = (ev) => ev.target.value
 
-// Database
-const stores = {
-  tasks: [
-    ['byParent', 'parent'],
-    ['atRoot', 'atRoot'],
-  ],
-  sessions: [
-    ['byTask', 'taskKeys', {multiEntry: true}],
-    ['byStartTime', 'startTime'],
-    ['byEndTime', 'endTime'],
-    ['byDay', 'day'],
-    ['inDay', 'days', {multiEntry: true}],
-  ]
-}
-
-const migrations = {
-  2: (IDBDb, ev) => {
-    db.transaction(['sessions'], 'rw', function(sessions) {
-      sessions.byStartTime.getAll().then((ses) => {
-        map((s) => {
-          s.days = T.daysBetween(s.startTime, s.endTime)
-          sessions.put(s)
-        }, ses)
-      })
-    }).then(() => console.log('saved'))
-  }
-}
-
-const db = syncedDB.open({
-  name: 'timeApp',
-  version: 2,
-  stores: stores,
-  migrations: migrations,
-})
-const putTask = (t) => db.tasks.put(t)
+import {db, putTask} from './db'
 
 // State
 
@@ -677,7 +642,9 @@ const deleteTask = (node, parentChildren) => {
 }
 
 const updateTaskNode = R.curry((idx, action) => {
-  state.taskTree[idx] = TaskNode.update(action, state.taskTree[idx])
+  const [task, asyncActions] = TaskNode.update(action, state.taskTree[idx])
+  state.taskTree[idx] = task
+  R.map((a) => a.fork((err) => { throw err }, updateTaskNode(idx)), asyncActions)
   domRender()
 })
 
