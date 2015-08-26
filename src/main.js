@@ -529,16 +529,16 @@ const taskNode = (parent, task) => ({
 // Modify state
 
 const FOLD_IN = 0, FOLD_OUT = 1
-let foldedAt = 0
-let foldDiff = 0
-let foldDir = FOLD_OUT
+const lastFold = {
+  foldedAt: 0, foldDiff: 0, foldDir: FOLD_OUT,
+}
 
 const toggleFold = (pos, nrOfSubtasks, node) => {
   const {task} = node
-  foldDir = task.open ? FOLD_IN : FOLD_OUT
-  foldedAt = pos
-  if (foldDir === FOLD_IN) {
-    foldDiff = nrOfSubtasks
+  lastFold.foldDir = task.open ? FOLD_IN : FOLD_OUT
+  lastFold.foldedAt = pos
+  if (lastFold.foldDir === FOLD_IN) {
+    lastFold.foldDiff = nrOfSubtasks
     domRender()
     //node.children = [] // FIXME
     task.open = !task.open
@@ -546,11 +546,11 @@ const toggleFold = (pos, nrOfSubtasks, node) => {
   } else {
     task.open = !task.open
     initChildNodes(node).then(() => {
-      foldDiff = countChildren(node)
+      lastFold.foldDiff = countChildren(node)
       domRender()
     })
   }
-  setTimeout(() => putTask(task), foldDiff * medDur)
+  setTimeout(() => putTask(task), lastFold.foldDiff * medDur)
 }
 
 const toggleDone = (task) => {
@@ -709,7 +709,7 @@ const createTaskModal = (newTask) =>
     ])
   ])
 
-const taskNodeView = (acc, model, idx) => TaskNode.view(state.taskTree, foldedAt, foldDir, foldDiff, [], updateTaskNode(idx), acc, model)
+const taskNodeView = (acc, model, idx) => TaskNode.view(state.taskTree, lastFold, [], updateTaskNode(idx), acc, model)
 
 const vtree = (state) => {
   const [nTasks, tasks] = reduceIdx(taskNodeView, [0, []], state.taskTree)
@@ -734,7 +734,7 @@ const vtree = (state) => {
     h('div.after-tasks', {
       style: {transform: `translateY(${nTasks*taskLineH}px)`,
               transitionDuration: medDur/2 + 'ms',
-              transitionDelay: (foldDir === FOLD_IN ? foldDiff*medDur/6+medDur : 0) + 'ms'},
+              transitionDelay: (lastFold.foldDir === FOLD_IN ? lastFold.foldDiff*medDur/6+medDur : 0) + 'ms'},
     }, [
       h('div.btn', {
         style: {margin: '.2em'},

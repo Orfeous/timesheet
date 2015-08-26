@@ -59,16 +59,14 @@ const keyL = c(R.lensProp('task'), R.lensProp('key'))
 const childrenL = R.lensProp('children')
 
 const updateChild = R.curry((key, action, children) =>
-  R.reduce(([children, effects], child) => {
+  R.reverse(R.mapAccum((effects, child) => {
     if (child.task.key === key) {
       const [newChild, newEffects] = update(action, child)
-      children.push(newChild)
-      return [children, R.concat(effects, newEffects)]
+      return [R.concat(effects, newEffects), newChild]
     } else {
-      children.push(child)
-      return [children, effects]
+      return [effects, child]
     }
-  }, [[], []], children))
+  }, [], children)))
 
 const noEffect = (model) => [model, []]
 
@@ -123,13 +121,13 @@ const taskOptionsModal = (parentChildren, node, pos, nrOfSubtasks) =>
     }, [h('i.fa.fa-times'), 'Delete task']),
   ])
 
-const subView = R.curry((children, foldedAt, foldDir, foldDiff, path, update, acc, node) =>
-  view(children, foldedAt, foldDir, foldDiff, R.append(node.task.key, path), c(update, Action.UpdateChild(node.task.key)), acc, node))
+const subView = R.curry((children, lastFold, path, update, acc, node) =>
+  view(children, lastFold, R.append(node.task.key, path), c(update, Action.UpdateChild(node.task.key)), acc, node))
 
-export const view = R.curry((parentChildren, foldedAt, foldDir, foldDiff, path, update, [pos, nodes], model) => {
+export const view = R.curry((parentChildren, lastFold, path, update, [pos, nodes], model) => {
   const level = path.length
   const {task, children} = model
-  const [newPos, subTasks] = task.open ? R.reduce(subView(children, foldedAt, foldDir, foldDiff, R.append(task.key, path), update), [pos + 1, []], children)
+  const [newPos, subTasks] = task.open ? R.reduce(subView(children, lastFold, R.append(task.key, path), update), [pos + 1, []], children)
                                        : [pos + 1, []]
   const nrOfSubtasks = newPos - pos - 1
   return [newPos, R.append(h('li.task', {
@@ -138,9 +136,9 @@ export const view = R.curry((parentChildren, foldedAt, foldDir, foldDiff, path, 
     h('div.task-line', {
       style: {opacity: 0, transform: `translateY(${pos*taskLineH}px)`,
               transitionDuration: `${medDur}ms, ${medDur/2}ms`,
-              transitionDelay: `${(pos-foldedAt)*medDur/6+(medDur/2)}ms, ${foldDir===FOLD_IN ? foldDiff*medDur/6+medDur : 0}ms`,
+              transitionDelay: `${(pos-lastFold.foldedAt)*medDur/6+(medDur/2)}ms, ${lastFold.foldDir===FOLD_IN ? lastFold.foldDiff*medDur/6+medDur : 0}ms`,
               delayed: {opacity: 1, transform: `translateY(${pos*taskLineH}px)`},
-              destroy: {opacity: 0, transitionDelay: `${(foldDiff-(pos-foldedAt))*medDur/6}ms, 0ms`}},
+              destroy: {opacity: 0, transitionDelay: `${(lastFold.foldDiff-(pos-lastFold.foldedAt))*medDur/6}ms, 0ms`}},
     },
     R.map((l) => h('div.indent-indicator', {
       class: {'indent-faded': l !== level},
